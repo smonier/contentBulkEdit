@@ -3,7 +3,7 @@
     "title": "Content Tools"
   },
   "contentBulkEdit": {
-    "label": "Content bulk edit",
+    "label": "Bulk edit content",
     "header": "Bulk edit content - Site {{siteInfo}}",
     "subtitle": "Search content, choose editable columns, then apply a validated bulk update on the selected rows.",
     "filtersTitle": "Search criteria",
