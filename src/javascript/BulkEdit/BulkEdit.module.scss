@@ -63,6 +63,17 @@
     gap: 6px;
 }
 
+.fieldError {
+    padding: 10px;
+    border: 1px solid #d64545;
+    border-radius: 8px;
+    background: #fff5f5;
+}
+
+.fieldErrorMessage {
+    color: #b42318;
+}
+
 .pickerField {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -89,6 +100,13 @@
     border: 1px solid #e3e8f2;
     border-radius: 10px;
     background: #fbfcfe;
+}
+
+.dateColumnHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
 }
 
 .propertyList {

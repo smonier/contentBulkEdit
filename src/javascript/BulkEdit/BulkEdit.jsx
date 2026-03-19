@@ -53,6 +53,7 @@ export const BulkEdit = ({match}) => {
     const [selectedCategoryLabels, setSelectedCategoryLabels] = useState([]);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [lastSearchVariables, setLastSearchVariables] = useState(null);
+    const [searchValidationErrors, setSearchValidationErrors] = useState({});
 
     const {data: languagesData} = useQuery(GET_SITE_LANGUAGES_QUERY, {
         variables: {workspace: 'EDIT', scope: sitePath},
@@ -168,10 +169,21 @@ export const BulkEdit = ({match}) => {
 
     const categoryTreeData = useMemo(() => categoryData?.contentBulkEdit?.getCategories || [], [categoryData]);
     const nodes = useMemo(() => searchData?.contentBulkEdit?.searchContent?.nodes || [], [searchData]);
+    const searchResultCount = searchData?.contentBulkEdit?.searchContent?.totalCount || 0;
     const searchTruncated = Boolean(searchData?.contentBulkEdit?.searchContent?.truncated);
 
     const handleFilterChange = (name, value) => {
         setFilters(prev => ({...prev, [name]: value}));
+        setSearchValidationErrors(prev => {
+            if (!prev[name]) {
+                return prev;
+            }
+
+            const next = {...prev};
+            delete next[name];
+            return next;
+        });
+
         if (name === 'contentType') {
             setLastSearchVariables(null);
             setSelectedProperties([]);
@@ -188,9 +200,12 @@ export const BulkEdit = ({match}) => {
 
     const handleSearch = () => {
         if (!filters.contentType) {
+            setSearchValidationErrors({contentType: true});
             notify('warning', t('contentBulkEdit.selectType'));
             return;
         }
+
+        setSearchValidationErrors({});
 
         const variables = {
             siteKey,
@@ -223,6 +238,7 @@ export const BulkEdit = ({match}) => {
         setBulkValues({});
         setSelectedCategoryIds([]);
         setSelectedCategoryLabels([]);
+        setSearchValidationErrors({});
     };
 
     const handleToggleAll = checked => {
@@ -351,6 +367,7 @@ export const BulkEdit = ({match}) => {
                     <SearchFilters
                         t={t}
                         filters={filters}
+                        validationErrors={searchValidationErrors}
                         contentTypes={contentTypes}
                         authors={authors}
                         languages={languages.length > 0 ? languages : [selectedLanguage]}
@@ -375,7 +392,10 @@ export const BulkEdit = ({match}) => {
                                     {t('contentBulkEdit.resultsTitle')}
                                 </Typography>
                                 <Typography variant="body">
-                                    {t('contentBulkEdit.rowsSelected', {count: selectedNodes.length})}
+                                    {t('contentBulkEdit.resultsSummary', {
+                                        results: searchResultCount,
+                                        selected: selectedNodes.length
+                                    })}
                                 </Typography>
                             </div>
 

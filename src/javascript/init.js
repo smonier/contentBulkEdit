@@ -1,5 +1,7 @@
+import React from 'react';
 import {registry} from '@jahia/ui-extender';
 import register from './AdminPanel.register';
+import BulkEditIcon from './icons/BulkEditIcon';
 
 export default function () {
     registry.add('callback', 'contentBulkEdit', {
@@ -14,7 +16,7 @@ export default function () {
             if (!accordionExists) {
                 registry.add(accordionType, accordionKey, registry.get(accordionType, 'renderDefaultApps'), {
                     targets: ['jcontent:75'],
-                    icon: window.jahia.moonstone.toIconComponent('<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v3H4V6zm0 5h16v3H4v-3zm0 5h10v3H4v-3z"/></svg>'),
+                    icon: <BulkEditIcon/>,
                     label: 'contentBulkEdit:accordion.title',
                     appsTarget: 'contentToolsAccordionApps'
                 });

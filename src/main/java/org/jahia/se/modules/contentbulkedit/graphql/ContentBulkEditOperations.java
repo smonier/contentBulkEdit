@@ -29,12 +29,15 @@ import javax.jcr.PropertyType;
 import javax.jcr.RepositoryException;
 import javax.jcr.Session;
 import javax.jcr.Value;
+import javax.jcr.ValueFormatException;
 import javax.jcr.query.Query;
 import javax.jcr.query.QueryManager;
 import javax.jcr.query.QueryResult;
 import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -49,6 +52,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -444,19 +448,6 @@ public class ContentBulkEditOperations {
                 .append(escapeSqlLiteral(path))
                 .append("'])");
 
-        if (filters != null) {
-            appendStatusConstraint(query, filters.getPublicationStatus());
-            appendDateConstraint(query, "j:lastPublished", filters.getPublicationFrom(), filters.getPublicationTo());
-            appendDateConstraint(query, "jcr:created", filters.getCreationFrom(), filters.getCreationTo());
-            appendDateConstraint(query, "jcr:lastModified", filters.getModificationFrom(), filters.getModificationTo());
-
-            if (StringUtils.isNotBlank(filters.getAuthor())) {
-                String author = escapeSqlLiteral(filters.getAuthor());
-                query.append(" AND (item.[jcr:createdBy] = '").append(author)
-                        .append("' OR item.[jcr:lastModifiedBy] = '").append(author).append("')");
-            }
-        }
-
         query.append(" ORDER BY item.[jcr:lastModified] DESC");
         return query.toString();
     }
@@ -477,48 +468,6 @@ public class ContentBulkEditOperations {
         }
 
         return trimmedPath;
-    }
-
-    private void appendStatusConstraint(StringBuilder query, String publicationStatus) {
-        if (StringUtils.isBlank(publicationStatus)) {
-            return;
-        }
-
-        String normalized = publicationStatus.toLowerCase(Locale.ROOT);
-        if ("published".equals(normalized)) {
-            query.append(" AND item.[j:published] = true");
-        } else if ("unpublished".equals(normalized)) {
-            query.append(" AND (item.[j:published] IS NULL OR item.[j:published] = false)");
-        }
-    }
-
-    private void appendDateConstraint(StringBuilder query, String propertyName, String from, String to) {
-        if (StringUtils.isBlank(from) && StringUtils.isBlank(to)) {
-            return;
-        }
-
-        if (StringUtils.isNotBlank(from)) {
-            query.append(" AND item.[").append(propertyName).append("] >= CAST('")
-                    .append(formatDateForQuery(from, false)).append("' AS DATE)");
-        }
-
-        if (StringUtils.isNotBlank(to)) {
-            query.append(" AND item.[").append(propertyName).append("] <= CAST('")
-                    .append(formatDateForQuery(to, true)).append("' AS DATE)");
-        }
-    }
-
-    private String formatDateForQuery(String input, boolean endOfDay) {
-        try {
-            LocalDate parsed = LocalDate.parse(input, DATE_INPUT);
-            if (endOfDay) {
-                return parsed.atTime(23, 59, 59).atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-            }
-
-            return parsed.atStartOfDay().atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        } catch (DateTimeParseException e) {
-            throw new IllegalArgumentException("Invalid date filter: " + input, e);
-        }
     }
 
     private String escapeSqlLiteral(String value) {
@@ -645,22 +594,35 @@ public class ContentBulkEditOperations {
             return false;
         }
 
-        LocalDateTime dateTime = LocalDateTime.ofInstant(value.toInstant(), ZoneOffset.UTC);
+        LocalDate valueDate = LocalDate.of(
+                value.get(Calendar.YEAR),
+                value.get(Calendar.MONTH) + 1,
+                value.get(Calendar.DAY_OF_MONTH)
+        );
+
         if (StringUtils.isNotBlank(from)) {
-            LocalDateTime fromBoundary = LocalDate.parse(from, DATE_INPUT).atStartOfDay();
-            if (dateTime.isBefore(fromBoundary)) {
+            LocalDate fromBoundary = parseInputDate(from);
+            if (valueDate.isBefore(fromBoundary)) {
                 return false;
             }
         }
 
         if (StringUtils.isNotBlank(to)) {
-            LocalDateTime toBoundary = LocalDate.parse(to, DATE_INPUT).atTime(23, 59, 59);
-            if (dateTime.isAfter(toBoundary)) {
+            LocalDate toBoundary = parseInputDate(to);
+            if (valueDate.isAfter(toBoundary)) {
                 return false;
             }
         }
 
         return true;
+    }
+
+    private LocalDate parseInputDate(String input) {
+        try {
+            return LocalDate.parse(input, DATE_INPUT);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException("Invalid date filter: " + input, e);
+        }
     }
 
     private String extractSiteKeyFromPath(String path) {
@@ -881,14 +843,63 @@ public class ContentBulkEditOperations {
 
     private Calendar resolveNodeDate(JCRNodeWrapper node, JCRNodeWrapper translationNode, String propertyName) throws RepositoryException {
         if (translationNode != null && translationNode.hasProperty(propertyName)) {
-            return translationNode.getProperty(propertyName).getDate();
+            Calendar date = readCalendarProperty(translationNode.getProperty(propertyName));
+            if (date != null) {
+                return date;
+            }
         }
 
         if (node.hasProperty(propertyName)) {
-            return node.getProperty(propertyName).getDate();
+            return readCalendarProperty(node.getProperty(propertyName));
         }
 
         return null;
+    }
+
+    private Calendar readCalendarProperty(Property property) throws RepositoryException {
+        if (property == null) {
+            return null;
+        }
+
+        try {
+            return property.getDate();
+        } catch (ValueFormatException e) {
+            String rawValue = StringUtils.trimToNull(property.getString());
+            if (rawValue == null) {
+                return null;
+            }
+
+            Instant instant = parseInstantValue(rawValue);
+            Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+            calendar.setTimeInMillis(instant.toEpochMilli());
+            return calendar;
+        }
+    }
+
+    private Instant parseInstantValue(String rawValue) {
+        try {
+            return Instant.parse(rawValue);
+        } catch (DateTimeParseException ignored) {
+            // Try other common Jahia/JCR string date representations below.
+        }
+
+        try {
+            return OffsetDateTime.parse(rawValue, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant();
+        } catch (DateTimeParseException ignored) {
+            // Try local date-time and date-only representations below.
+        }
+
+        try {
+            return LocalDateTime.parse(rawValue, DateTimeFormatter.ISO_LOCAL_DATE_TIME).toInstant(ZoneOffset.UTC);
+        } catch (DateTimeParseException ignored) {
+            // Try date-only representation below.
+        }
+
+        try {
+            return LocalDate.parse(rawValue, DATE_INPUT).atStartOfDay().toInstant(ZoneOffset.UTC);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException("Invalid repository date value: " + rawValue, e);
+        }
     }
 
     private JCRNodeWrapper getTranslationNode(JCRNodeWrapper node, String language) throws RepositoryException {

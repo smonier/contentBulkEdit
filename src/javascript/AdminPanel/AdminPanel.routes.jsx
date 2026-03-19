@@ -2,12 +2,12 @@ import {registry} from '@jahia/ui-extender';
 import {DEFAULT_ROUTE} from './AdminPanel.constants';
 import {AdminPanel} from './AdminPanel';
 import React, {Suspense} from 'react';
-import DefaultEntry from '@jahia/moonstone/dist/icons/components/DefaultEntry';
+import BulkEditIcon from '../icons/BulkEditIcon';
 
 export const registerRoutes = () => {
     registry.add('adminRoute', 'contentBulkEdit', {
         targets: ['contentToolsAccordionApps'],
-        icon: <DefaultEntry/>,
+        icon: <BulkEditIcon/>,
         label: 'contentBulkEdit:contentBulkEdit.label',
         path: `${DEFAULT_ROUTE}*`,
         defaultPath: DEFAULT_ROUTE,

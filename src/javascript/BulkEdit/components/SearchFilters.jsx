@@ -6,6 +6,7 @@ import styles from '../BulkEdit.module.scss';
 export const SearchFilters = ({
     t,
     filters,
+    validationErrors,
     contentTypes,
     authors,
     languages,
@@ -54,6 +55,13 @@ export const SearchFilters = ({
         });
     };
 
+    const clearDateBlock = (fromKey, toKey) => {
+        onFilterChange(fromKey, '');
+        onFilterChange(toKey, '');
+    };
+
+    const getFieldClassName = fieldName => validationErrors?.[fieldName] ? `${styles.field} ${styles.fieldError}` : styles.field;
+
     return (
         <div className={styles.searchCriteriaLayout}>
             <Paper className={`${styles.panel} ${styles.searchPanel}`}>
@@ -93,13 +101,18 @@ export const SearchFilters = ({
                     </div>
 
                     <div className={styles.fieldColumn}>
-                        <div className={styles.field}>
+                        <div className={getFieldClassName('contentType')}>
                             <Typography variant="caption" weight="bold">{t('contentBulkEdit.filters.contentType')}</Typography>
                             <Dropdown
                                 data={contentTypeOptions}
                                 value={filters.contentType}
                                 onChange={(event, item) => onFilterChange('contentType', item?.value || '')}
                             />
+                            {validationErrors?.contentType && (
+                                <Typography variant="caption" className={styles.fieldErrorMessage}>
+                                    {t('contentBulkEdit.requiredField')}
+                                </Typography>
+                            )}
                         </div>
 
                         <div className={styles.field}>
@@ -143,7 +156,15 @@ export const SearchFilters = ({
 
                 <div className={styles.dateColumns}>
                     <div className={styles.dateColumn}>
-                        <Typography variant="caption" weight="bold">{t('contentBulkEdit.filters.publicationDate')}</Typography>
+                        <div className={styles.dateColumnHeader}>
+                            <Typography variant="caption" weight="bold">{t('contentBulkEdit.filters.publicationDate')}</Typography>
+                            <Button
+                                label={t('contentBulkEdit.clear')}
+                                variant="ghost"
+                                size="small"
+                                onClick={() => clearDateBlock('publicationFrom', 'publicationTo')}
+                            />
+                        </div>
                         <div className={styles.field}>
                             <Typography variant="caption">{t('contentBulkEdit.filters.from')}</Typography>
                             <Input
@@ -163,7 +184,15 @@ export const SearchFilters = ({
                     </div>
 
                     <div className={styles.dateColumn}>
-                        <Typography variant="caption" weight="bold">{t('contentBulkEdit.filters.creationDate')}</Typography>
+                        <div className={styles.dateColumnHeader}>
+                            <Typography variant="caption" weight="bold">{t('contentBulkEdit.filters.creationDate')}</Typography>
+                            <Button
+                                label={t('contentBulkEdit.clear')}
+                                variant="ghost"
+                                size="small"
+                                onClick={() => clearDateBlock('creationFrom', 'creationTo')}
+                            />
+                        </div>
                         <div className={styles.field}>
                             <Typography variant="caption">{t('contentBulkEdit.filters.from')}</Typography>
                             <Input
@@ -183,7 +212,15 @@ export const SearchFilters = ({
                     </div>
 
                     <div className={styles.dateColumn}>
-                        <Typography variant="caption" weight="bold">{t('contentBulkEdit.filters.lastModificationDate')}</Typography>
+                        <div className={styles.dateColumnHeader}>
+                            <Typography variant="caption" weight="bold">{t('contentBulkEdit.filters.lastModificationDate')}</Typography>
+                            <Button
+                                label={t('contentBulkEdit.clear')}
+                                variant="ghost"
+                                size="small"
+                                onClick={() => clearDateBlock('modificationFrom', 'modificationTo')}
+                            />
+                        </div>
                         <div className={styles.field}>
                             <Typography variant="caption">{t('contentBulkEdit.filters.from')}</Typography>
                             <Input
@@ -210,6 +247,7 @@ export const SearchFilters = ({
 SearchFilters.propTypes = {
     t: PropTypes.func.isRequired,
     filters: PropTypes.object.isRequired,
+    validationErrors: PropTypes.object.isRequired,
     contentTypes: PropTypes.array.isRequired,
     authors: PropTypes.array.isRequired,
     languages: PropTypes.array.isRequired,
