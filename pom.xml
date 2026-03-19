@@ -38,6 +38,12 @@
     <packaging>bundle</packaging>
     <description>This is the custom ReactJS module (Content Bulk Edit Module) for running on a Jahia server.</description>
 
+    <scm>
+        <connection>scm:git:git@github.com:smonier/contentBulkEdit.git</connection>
+        <developerConnection>scm:git:git@github.com:smonier/contentBulkEdit.git</developerConnection>
+        <url>https://github.com/smonier/contentBulkEdit</url>
+        <tag>HEAD</tag>
+    </scm>
     <properties>
         <yarn.arguments>build:production</yarn.arguments>
     </properties>
@@ -179,8 +185,4 @@
         </dependency>
     </dependencies>
 
-
-  <scm>
-    <tag>contentBulkEdit-1.0.0</tag>
-  </scm>
 </project>
