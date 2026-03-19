@@ -1,0 +1,84 @@
+{
+  "name": "contentBulkEdit",
+  "version": "1.0.0-SNAPSHOT",
+  "scripts": {
+    "test": "env-cmd --no-override jest",
+    "testcli": "jest",
+    "build": "yarn webpack",
+    "build:nolint": "yarn webpack",
+    "dev": "yarn webpack --watch",
+    "watch": "yarn webpack --watch",
+    "webpack": "node --max_old_space_size=2048 ./node_modules/webpack/bin/webpack.js",
+    "build:analyze": "yarn build --analyze",
+    "build:production": "yarn build --mode=production",
+    "build:production-analyze": "yarn build --mode=production --analyze",
+    "clean": "rimraf *.log src/main/resources/javascript/apps",
+    "clean:all": "yarn clean && rimraf node_modules node",
+    "lint:js": "eslint --ext js,jsx src/javascript",
+    "lint:js:fix": "yarn lint:js --fix src/javascript",
+    "lint": "yarn lint:js",
+    "lint:fix": "yarn lint:js:fix"
+  },
+  "main": "index.js",
+  "license": "MIT",
+  "dx-extends": {
+    "@jahia/jahia-ui-root": "0.0.1"
+  },
+  "jahia": {
+    "remotes": {
+      "jahia": "javascript/apps/remoteEntry.js"
+    },
+    "urlPatterns": {
+      "jahia": "/administration/(?<siteKey>\\S*?)/settings/(?<settingName>\\S*)"
+    }
+  },
+  "dependencies": {
+    "@apollo/client": "^3.7.17",
+    "@jahia/data-helper": "^1.1.14",
+    "@jahia/moonstone": "^2.11.2",
+    "@jahia/ui-extender": "^1.1.1",
+    "dayjs": "^1.10.6",
+    "graphql": "^15.4.0",
+    "graphql-tag": "^2.12.6",
+    "prop-types": "^15.7.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-i18next": "^11.7.2",
+    "react-router": "^5.2.1",
+    "react-router-dom": "^5.1.2",
+    "i18next": "^19.7.0"
+  },
+  "resolutions": {
+    "@jahia/data-helper/graphql": "^15.4.0",
+    "graphql": "^15.4.0"
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.13.10",
+    "@babel/core": "^7.13.10",
+    "@babel/plugin-proposal-class-properties": "^7.13.10",
+    "@babel/plugin-syntax-dynamic-import": "^7.8.3",
+    "@babel/plugin-transform-classes": "^7.13.10",
+    "@babel/plugin-transform-runtime": "^7.13.10",
+    "@babel/preset-env": "^7.13.12",
+    "@babel/preset-react": "^7.12.13",
+    "@babel/preset-typescript": "^7.13.10",
+    "@babel/runtime": "^7.13.10",
+    "@jahia/eslint-config": "^2.1.0",
+    "@jahia/webpack-config": "^1.1.0",
+    "babel-loader": "^8.1.0",
+    "clean-webpack-plugin": "^4.0.0",
+    "copy-webpack-plugin": "^9.0.1",
+    "css-loader": "^6.8.1",
+    "eslint": "^8.4.1",
+    "eslint-plugin-jest": "^27.2.1",
+    "eslint-plugin-react": "^7.32.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "rimraf": "^3.0.0",
+    "sass": "^1.55.0",
+    "sass-loader": "^12.4.0",
+    "style-loader": "^3.3.1",
+    "webpack": "^5.91.0",
+    "webpack-bundle-analyzer": "^4.10.2",
+    "webpack-cli": "^5.1.4"
+  }
+}

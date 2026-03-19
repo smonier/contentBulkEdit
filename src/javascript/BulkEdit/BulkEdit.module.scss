@@ -1,0 +1,248 @@
+.root {
+    display: grid;
+    gap: 24px;
+    padding: 24px;
+    background: linear-gradient(180deg, #f6f8fc 0%, #eef2f9 100%);
+}
+
+.panel {
+    padding: 20px;
+    border: 1px solid #d8e0ef;
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 12px 30px rgba(15, 33, 61, 0.06);
+}
+
+.panelHeader {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 16px;
+}
+
+.searchCriteriaLayout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+}
+
+.searchCriteriaLayout > * {
+    align-self: start;
+    height: 100%;
+    margin-top: 0;
+}
+
+.searchCriteriaLayout :global(.moonstone-paper + .moonstone-paper) {
+    margin-top: 0;
+}
+
+.searchPanel {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+}
+
+.filtersGrid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.fieldColumn {
+    display: grid;
+    align-content: start;
+    gap: 16px;
+    padding: 12px;
+    border: 1px solid #e3e8f2;
+    border-radius: 10px;
+    background: #fbfcfe;
+}
+
+.field {
+    display: grid;
+    gap: 6px;
+}
+
+.pickerField {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: end;
+}
+
+.pickerInput {
+    min-width: 0;
+}
+
+.dateColumns {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    height: 100%;
+}
+
+.dateColumn {
+    display: grid;
+    align-content: start;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid #e3e8f2;
+    border-radius: 10px;
+    background: #fbfcfe;
+}
+
+.propertyList {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+    max-height: 320px;
+    overflow: auto;
+}
+
+.propertyRow {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 12px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    border: 1px solid #e3e8f2;
+    border-radius: 10px;
+    background: #fbfcfe;
+}
+
+.propertyInfo {
+    display: grid;
+    gap: 2px;
+}
+
+.resultsWorkspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 24px;
+    align-items: start;
+}
+
+.resultsWorkspace :global(.moonstone-paper + .moonstone-paper) {
+    margin-top: 0;
+}
+
+.resultsPanel {
+    min-width: 0;
+}
+
+.bulkEditPanel {
+    position: sticky;
+    top: 24px;
+    min-width: 0;
+    max-height: calc(100vh - 48px);
+    overflow: auto;
+    transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.bulkEditPanelContent {
+    display: grid;
+    gap: 16px;
+}
+
+.tableContainer {
+    overflow-x: auto;
+}
+
+.selectedRow {
+    background: #eef4ff;
+}
+
+.expandedBlock {
+    display: grid;
+    gap: 16px;
+    margin-top: 16px;
+    padding: 16px;
+    border: 1px solid #dde6f3;
+    border-radius: 12px;
+    background: #f8fbff;
+}
+
+.expandedBlockHeader {
+    display: grid;
+    gap: 4px;
+}
+
+.metadataGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px 16px;
+}
+
+.metadataItem {
+    display: grid;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid #dde6f3;
+    border-radius: 10px;
+    background: #ffffff;
+}
+
+.categoryDropdown {
+    width: 100%;
+}
+
+.actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.dialogOverlay {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(14, 25, 43, 0.45);
+    z-index: 1000;
+}
+
+.dialog {
+    width: min(640px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+    padding: 24px;
+    border-radius: 14px;
+    background: #ffffff;
+    box-shadow: 0 20px 60px rgba(12, 24, 45, 0.25);
+    display: grid;
+    gap: 16px;
+}
+
+.summaryBlock {
+    display: grid;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid #e6ebf4;
+}
+
+.warningText {
+    color: #aa6a00;
+}
+
+@media (max-width: 1080px) {
+    .searchCriteriaLayout {
+        grid-template-columns: 1fr;
+    }
+
+    .filtersGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .dateColumns {
+        grid-template-columns: 1fr;
+    }
+
+    .resultsWorkspace {
+        grid-template-columns: 1fr;
+    }
+
+    .bulkEditPanel {
+        position: static;
+        max-height: none;
+    }
+}
