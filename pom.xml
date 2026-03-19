@@ -34,7 +34,7 @@
     <groupId>org.jahia.se.modules</groupId>
     <artifactId>contentBulkEdit</artifactId>
     <name>Content Bulk Edit Module</name>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.0</version>
     <packaging>bundle</packaging>
     <description>This is the custom ReactJS module (Content Bulk Edit Module) for running on a Jahia server.</description>
 
@@ -179,4 +179,8 @@
         </dependency>
     </dependencies>
 
+
+  <scm>
+    <tag>contentBulkEdit-1.0.0</tag>
+  </scm>
 </project>
