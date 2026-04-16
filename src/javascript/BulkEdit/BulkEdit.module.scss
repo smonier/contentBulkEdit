@@ -1,8 +1,6 @@
 .root {
     display: grid;
     gap: 24px;
-    padding: 24px;
-    background: linear-gradient(180deg, #f6f8fc 0%, #eef2f9 100%);
 }
 
 .panel {
@@ -61,6 +59,23 @@
 .field {
     display: grid;
     gap: 6px;
+}
+
+.fieldLabelRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.languageTag {
+    padding: 1px 6px;
+    border: 1px solid #b0bfd8;
+    border-radius: 4px;
+    background: #eef2f9;
+    color: #4a5c7a;
+    font-size: 11px;
+    line-height: 16px;
+    white-space: nowrap;
 }
 
 .fieldError {

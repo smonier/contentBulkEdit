@@ -214,7 +214,8 @@ public class ContentBulkEditOperations {
         final List<String> safeTags = sanitizeStringValues(tagValues);
         final List<String> safeCategoryIdentifiers = sanitizeStringValues(categoryIdentifiers);
 
-        return jcrTemplate.doExecuteWithSystemSessionAsUser(null, "default", null, session -> {
+        Locale locale = new Locale(normalizedLanguage);
+        return jcrTemplate.doExecuteWithSystemSessionAsUser(null, "default", locale, session -> {
             GqlBulkEditExecutionResult executionResult = new GqlBulkEditExecutionResult();
             executionResult.setSuccessfulNodes(new ArrayList<>());
             executionResult.setFailedNodes(new ArrayList<>());
@@ -999,7 +1000,7 @@ public class ContentBulkEditOperations {
             return 0;
         }
 
-        targetNode.setProperty(propertyName, value, language);
+        targetNode.setProperty(propertyName, value);
         return 1;
     }
 

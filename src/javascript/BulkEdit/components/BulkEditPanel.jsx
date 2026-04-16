@@ -8,6 +8,8 @@ export const BulkEditPanel = ({
     t,
     selectedProperties,
     propertyLabels,
+    propertyDefinitions,
+    selectedLanguage,
     bulkValues,
     categoryData,
     selectedCategoryIds,
@@ -34,9 +36,16 @@ export const BulkEditPanel = ({
 
                 {selectedProperties.map(propertyName => (
                     <div key={propertyName} className={styles.field}>
-                        <Typography variant="caption" weight="bold">
-                            {propertyLabels[propertyName] || propertyName}
-                        </Typography>
+                        <div className={styles.fieldLabelRow}>
+                            <Typography variant="caption" weight="bold">
+                                {propertyLabels[propertyName] || propertyName}
+                            </Typography>
+                            {propertyDefinitions[propertyName]?.i18n && (
+                                <Typography variant="caption" className={styles.languageTag}>
+                                    {t('contentBulkEdit.bulkPanelLanguage', {lang: selectedLanguage})}
+                                </Typography>
+                            )}
+                        </div>
                         <Input
                             value={bulkValues[propertyName] || ''}
                             placeholder={t('contentBulkEdit.propertyPlaceholder')}
@@ -81,6 +90,8 @@ BulkEditPanel.propTypes = {
     t: PropTypes.func.isRequired,
     selectedProperties: PropTypes.array.isRequired,
     propertyLabels: PropTypes.object.isRequired,
+    propertyDefinitions: PropTypes.object.isRequired,
+    selectedLanguage: PropTypes.string.isRequired,
     bulkValues: PropTypes.object.isRequired,
     categoryData: PropTypes.array.isRequired,
     selectedCategoryIds: PropTypes.array.isRequired,

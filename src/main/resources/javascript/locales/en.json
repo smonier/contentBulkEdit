@@ -13,6 +13,7 @@
     "bulkPanelTitle": "Bulk edit values",
     "bulkPanelSubtitle": "Prepare the values to apply on {{count}} selected row(s).",
     "bulkPanelEmpty": "Select properties above to edit their values here.",
+    "bulkPanelLanguage": "{{lang}}",
     "search": "Search",
     "clear": "Clear",
     "browse": "Browse",

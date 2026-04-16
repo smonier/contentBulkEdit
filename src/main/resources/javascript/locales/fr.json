@@ -13,6 +13,7 @@
     "bulkPanelTitle": "Valeurs de modification en masse",
     "bulkPanelSubtitle": "Préparez les valeurs à appliquer sur {{count}} ligne(s) sélectionnée(s).",
     "bulkPanelEmpty": "Sélectionnez des propriétés ci-dessus pour modifier leurs valeurs ici.",
+    "bulkPanelLanguage": "{{lang}}",
     "search": "Rechercher",
     "clear": "Effacer",
     "browse": "Parcourir",

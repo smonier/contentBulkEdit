@@ -114,6 +114,38 @@ export const BulkEdit = ({match}) => {
         executeSearch({variables: nextVariables});
     }, [executeSearch, lastSearchVariables, selectedProperties]);
 
+    useEffect(() => {
+        if (!lastSearchVariables) {
+            return;
+        }
+
+        if (!filters.contentType) {
+            return;
+        }
+
+        const nextVariables = {
+            siteKey,
+            language: selectedLanguage,
+            text: filters.text || null,
+            path: filters.path || null,
+            contentType: filters.contentType || null,
+            publicationStatus: filters.publicationStatus || null,
+            publicationFrom: filters.publicationFrom || null,
+            publicationTo: filters.publicationTo || null,
+            creationFrom: filters.creationFrom || null,
+            creationTo: filters.creationTo || null,
+            modificationFrom: filters.modificationFrom || null,
+            modificationTo: filters.modificationTo || null,
+            author: filters.author || null,
+            properties: selectedProperties,
+            limit: 200
+        };
+
+        setLastSearchVariables(nextVariables);
+        executeSearch({variables: nextVariables});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filters, selectedLanguage]);
+
     const contentTypes = useMemo(() => {
         const nodes = contentTypesData?.jcr?.nodeTypes?.nodes || [];
         return nodes
@@ -430,6 +462,8 @@ export const BulkEdit = ({match}) => {
                             t={t}
                             selectedProperties={selectedProperties}
                             propertyLabels={propertyLabels}
+                            propertyDefinitions={propertyDefinitions}
+                            selectedLanguage={selectedLanguage}
                             bulkValues={bulkValues}
                             categoryData={categoryTreeData}
                             selectedCategoryIds={selectedCategoryIds}
