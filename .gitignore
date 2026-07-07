@@ -21,3 +21,14 @@ target/*
 !.yarn/versions
 
 .env
+
+# OS / logs
+.DS_Store
+*.log
+
+# Maven release plugin leftovers
+pom.xml.releaseBackup
+release.properties
+
+# frontend-maven-plugin downloaded runtime
+node/

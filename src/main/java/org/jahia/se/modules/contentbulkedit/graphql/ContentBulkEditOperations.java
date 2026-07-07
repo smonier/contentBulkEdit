@@ -1,22 +1,36 @@
 package org.jahia.se.modules.contentbulkedit.graphql;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import graphql.annotations.annotationTypes.GraphQLDescription;
 import graphql.annotations.annotationTypes.GraphQLField;
 import graphql.annotations.annotationTypes.GraphQLName;
 import graphql.annotations.annotationTypes.GraphQLNonNull;
 import org.apache.commons.lang.StringUtils;
+import org.jahia.api.Constants;
 import org.jahia.modules.graphql.provider.dxm.osgi.annotations.GraphQLOsgiService;
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditCategoryInfo;
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditExecutionError;
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditExecutionResult;
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditNode;
+import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditPropertyDefinition;
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditPropertyValue;
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditSearchFiltersInput;
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditSearchResult;
+import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditSelectorOption;
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditUpdateInput;
 import org.jahia.services.content.JCRNodeWrapper;
+import org.jahia.services.content.JCRSessionFactory;
 import org.jahia.services.content.JCRSessionWrapper;
 import org.jahia.services.content.JCRTemplate;
+import org.jahia.services.content.nodetypes.ExtendedNodeType;
+import org.jahia.services.content.nodetypes.ExtendedPropertyDefinition;
+import org.jahia.services.content.nodetypes.NodeTypeRegistry;
+import org.jahia.services.content.nodetypes.SelectorType;
+import org.jahia.services.usermanager.JahiaUser;
+import org.jahia.utils.LanguageCodeConverters;
+import org.osgi.framework.Bundle;
+import org.osgi.framework.FrameworkUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,15 +38,19 @@ import javax.inject.Inject;
 import javax.jcr.Node;
 import javax.jcr.NodeIterator;
 import javax.jcr.Property;
-import javax.jcr.PropertyIterator;
 import javax.jcr.PropertyType;
 import javax.jcr.RepositoryException;
-import javax.jcr.Session;
 import javax.jcr.Value;
+import javax.jcr.ValueFactory;
 import javax.jcr.ValueFormatException;
+import javax.jcr.nodetype.NoSuchNodeTypeException;
 import javax.jcr.query.Query;
 import javax.jcr.query.QueryManager;
 import javax.jcr.query.QueryResult;
+import java.io.IOException;
+import java.io.InputStream;
+import java.math.BigDecimal;
+import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -45,6 +63,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
+import java.util.Enumeration;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -56,6 +76,17 @@ import java.util.TimeZone;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * GraphQL operations backing the Content Bulk Edit admin panel.
+ *
+ * <p>All operations run with the <em>calling user's</em> JCR session on the {@code default}
+ * workspace, so JCR ACLs apply naturally to both reads (search) and writes (bulk edit).
+ * Guest access is rejected up front.</p>
+ *
+ * <p>Property writes are definition-driven: the applicable {@link ExtendedPropertyDefinition}
+ * decides internationalization, cardinality and value type (weak references, dates, booleans,
+ * numbers) — the client only ever sends string representations.</p>
+ */
 @GraphQLName("ContentBulkEditOperations")
 @GraphQLDescription("Content bulk edit operations")
 public class ContentBulkEditOperations {
@@ -71,6 +102,8 @@ public class ContentBulkEditOperations {
     private static final int MAX_LIMIT = 500;
     private static final int MAX_SCAN = 5000;
     private static final String CATEGORY_ROOT = "/sites/systemsite/categories";
+    private static final String FORM_FIELDSETS_PATH = "/META-INF/jahia-content-editor-forms/fieldsets";
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private JCRTemplate jcrTemplate;
 
@@ -100,6 +133,7 @@ public class ContentBulkEditOperations {
             @GraphQLName("limit") Integer limit
     ) throws RepositoryException {
         ensureJcrTemplate();
+        JahiaUser user = requireAuthenticatedUser();
 
         final String validatedSiteKey = validateSiteKey(siteKey);
         final String normalizedLanguage = normalizeLanguage(language);
@@ -118,12 +152,13 @@ public class ContentBulkEditOperations {
         ));
         final List<String> safeProperties = sanitizePropertyNames(properties);
         final int effectiveLimit = resolveLimit(limit);
+        final Locale locale = toLocale(normalizedLanguage);
 
-        return jcrTemplate.doExecuteWithSystemSessionAsUser(null, "default", null, session -> {
+        return jcrTemplate.doExecute(user, Constants.EDIT_WORKSPACE, locale, session -> {
             QueryManager queryManager = session.getWorkspace().getQueryManager();
             String searchStatement = buildSearchQuery(validatedSiteKey, safeFilters);
-            logger.info("contentBulkEdit searchContent siteKey={} language={} filters={} query={}",
-                    validatedSiteKey, normalizedLanguage, summarizeFilters(safeFilters), searchStatement);
+            logger.info("contentBulkEdit searchContent user={} siteKey={} language={} filters={} query={}",
+                    user.getName(), validatedSiteKey, normalizedLanguage, summarizeFilters(safeFilters), searchStatement);
             QueryResult result = queryManager.createQuery(searchStatement, Query.JCR_SQL2).execute();
 
             Set<String> processed = new LinkedHashSet<>();
@@ -167,25 +202,114 @@ public class ContentBulkEditOperations {
 
     @GraphQLField
     @GraphQLName("getCategories")
-    @GraphQLDescription("Retrieve categories as a flat tree")
+    @GraphQLDescription("Retrieve categories as a flat tree, optionally scoped to a subtree")
     public List<GqlBulkEditCategoryInfo> getCategories(
             @GraphQLName("siteKey") @GraphQLNonNull String siteKey,
-            @GraphQLName("language") @GraphQLNonNull String language
+            @GraphQLName("language") @GraphQLNonNull String language,
+            @GraphQLName("rootPath") @GraphQLDescription("Category subtree root; defaults to the system categories root") String rootPath
     ) throws RepositoryException {
         ensureJcrTemplate();
+        JahiaUser user = requireAuthenticatedUser();
         validateSiteKey(siteKey);
         final String normalizedLanguage = normalizeLanguage(language);
+        final String safeRootPath = resolveCategoryRoot(rootPath);
 
-        return jcrTemplate.doExecuteWithSystemSessionAsUser(null, "default", null, session -> {
-            if (!session.nodeExists(CATEGORY_ROOT)) {
+        return jcrTemplate.doExecute(user, Constants.EDIT_WORKSPACE, toLocale(normalizedLanguage), session -> {
+            if (!session.nodeExists(safeRootPath)) {
                 return Collections.emptyList();
             }
 
-            JCRNodeWrapper root = session.getNode(CATEGORY_ROOT);
+            JCRNodeWrapper root = session.getNode(safeRootPath);
             List<GqlBulkEditCategoryInfo> categories = new ArrayList<>();
             collectCategories(root, normalizedLanguage, categories, null);
             return categories;
         });
+    }
+
+    private String resolveCategoryRoot(String rootPath) {
+        String trimmed = StringUtils.trimToNull(rootPath);
+        if (trimmed == null) {
+            return CATEGORY_ROOT;
+        }
+
+        if (trimmed.contains("..") || !(trimmed.equals(CATEGORY_ROOT) || trimmed.startsWith(CATEGORY_ROOT + "/"))) {
+            throw new IllegalArgumentException("Category root must be under " + CATEGORY_ROOT);
+        }
+
+        return trimmed;
+    }
+
+    @GraphQLField
+    @GraphQLName("getPropertyDefinitions")
+    @GraphQLDescription("Editable property definitions of a node type with full type metadata (required type, selector, constraints)")
+    public List<GqlBulkEditPropertyDefinition> getPropertyDefinitions(
+            @GraphQLName("nodeType") @GraphQLNonNull String nodeType,
+            @GraphQLName("language") String language
+    ) throws RepositoryException {
+        requireAuthenticatedUser();
+
+        String trimmedType = StringUtils.trimToNull(nodeType);
+        if (trimmedType == null || !NODE_TYPE_PATTERN.matcher(trimmedType).matches()) {
+            throw new IllegalArgumentException("Invalid node type");
+        }
+
+        final Locale locale = toLocale(normalizeLanguage(language));
+        ExtendedNodeType type;
+        try {
+            type = NodeTypeRegistry.getInstance().getNodeType(trimmedType);
+        } catch (NoSuchNodeTypeException e) {
+            throw new IllegalArgumentException("Unknown node type: " + trimmedType);
+        }
+
+        Map<String, Map<String, FormFieldOverride>> formOverrides = loadFormFieldOverrides();
+
+        // Collect one definition per property name, preferring the most specific declaring
+        // type when a property is redeclared: exact type > non-mixin supertype > mixin.
+        Map<String, ExtendedPropertyDefinition> byName = new LinkedHashMap<>();
+        for (ExtendedPropertyDefinition propertyDefinition : type.getPropertyDefinitions()) {
+            if (propertyDefinition.isHidden() || propertyDefinition.isProtected()) {
+                continue;
+            }
+
+            ExtendedPropertyDefinition existing = byName.get(propertyDefinition.getName());
+            if (existing == null || declarationPriority(propertyDefinition, trimmedType) > declarationPriority(existing, trimmedType)) {
+                byName.put(propertyDefinition.getName(), propertyDefinition);
+            }
+        }
+
+        // Order like content editor: the type's own fields first, then inherited non-mixin
+        // fields, then one group per declaring mixin, preserving declaration order throughout.
+        List<GqlBulkEditPropertyDefinition> ownDefinitions = new ArrayList<>();
+        List<GqlBulkEditPropertyDefinition> inheritedDefinitions = new ArrayList<>();
+        Map<String, List<GqlBulkEditPropertyDefinition>> mixinGroups = new LinkedHashMap<>();
+
+        for (ExtendedPropertyDefinition propertyDefinition : byName.values()) {
+            GqlBulkEditPropertyDefinition definition = toGqlPropertyDefinition(propertyDefinition, locale);
+            applyFormOverride(definition, propertyDefinition, formOverrides);
+
+            ExtendedNodeType declaringType = propertyDefinition.getDeclaringNodeType();
+            if (declaringType.getName().equals(trimmedType)) {
+                ownDefinitions.add(definition);
+            } else if (declaringType.isMixin()) {
+                mixinGroups.computeIfAbsent(declaringType.getName(), key -> new ArrayList<>()).add(definition);
+            } else {
+                inheritedDefinitions.add(definition);
+            }
+        }
+
+        List<GqlBulkEditPropertyDefinition> result = new ArrayList<>(ownDefinitions);
+        result.addAll(inheritedDefinitions);
+        mixinGroups.values().forEach(result::addAll);
+        return result;
+    }
+
+    private int declarationPriority(ExtendedPropertyDefinition propertyDefinition, String requestedType) {
+        ExtendedNodeType declaringType = propertyDefinition.getDeclaringNodeType();
+        if (declaringType.getName().equals(requestedType)) {
+            return 2;
+        }
+
+        return declaringType.isMixin() ? 0 : 1;
     }
 
     @GraphQLField
@@ -194,37 +318,41 @@ public class ContentBulkEditOperations {
             @GraphQLName("siteKey") @GraphQLNonNull String siteKey,
             @GraphQLName("language") @GraphQLNonNull String language,
             @GraphQLName("nodeUuids") @GraphQLNonNull List<String> nodeUuids,
-            @GraphQLName("propertyUpdates") List<GqlBulkEditUpdateInput> propertyUpdates,
             @GraphQLName("propertyNames") List<String> propertyNames,
             @GraphQLName("propertyValues") List<String> propertyValues,
-            @GraphQLName("propertyInternationalized") List<Boolean> propertyInternationalized,
+            @GraphQLName("propertyModes") @GraphQLDescription("Per property, replace (default) or append; append only applies to multi-valued properties") List<String> propertyModes,
+            @GraphQLName("clearPropertyNames") @GraphQLDescription("Properties to remove from the selected nodes") List<String> clearPropertyNames,
             @GraphQLName("tagValues") List<String> tagValues,
-            @GraphQLName("categoryIdentifiers") List<String> categoryIdentifiers
+            @GraphQLName("tagMode") @GraphQLDescription("replace (default) or append") String tagMode,
+            @GraphQLName("categoryIdentifiers") List<String> categoryIdentifiers,
+            @GraphQLName("categoryMode") @GraphQLDescription("replace (default) or append") String categoryMode
     ) throws RepositoryException {
         ensureJcrTemplate();
+        JahiaUser user = requireAuthenticatedUser();
 
         final String validatedSiteKey = validateSiteKey(siteKey);
         final String normalizedLanguage = normalizeLanguage(language);
-        final List<GqlBulkEditUpdateInput> safeUpdates = sanitizeUpdates(resolvePropertyUpdates(
-                propertyUpdates,
-                propertyNames,
-                propertyValues,
-                propertyInternationalized
-        ));
+        final List<String> safeClears = sanitizePropertyNames(clearPropertyNames);
+        // A property flagged for clearing wins over a value update for the same name
+        final List<GqlBulkEditUpdateInput> safeUpdates = sanitizeUpdates(buildUpdatesFromArrays(propertyNames, propertyValues, propertyModes)).stream()
+                .filter(update -> !safeClears.contains(update.getName()))
+                .collect(Collectors.toList());
+        // Validate modes up front so a typo fails the whole call, not individual nodes
+        safeUpdates.forEach(update -> isAppendMode(update.getMode()));
         final List<String> safeTags = sanitizeStringValues(tagValues);
         final List<String> safeCategoryIdentifiers = sanitizeStringValues(categoryIdentifiers);
+        final boolean appendTags = isAppendMode(tagMode);
+        final boolean appendCategories = isAppendMode(categoryMode);
 
-        Locale locale = new Locale(normalizedLanguage);
-        return jcrTemplate.doExecuteWithSystemSessionAsUser(null, "default", locale, session -> {
+        Locale locale = toLocale(normalizedLanguage);
+        return jcrTemplate.doExecute(user, Constants.EDIT_WORKSPACE, locale, session -> {
             GqlBulkEditExecutionResult executionResult = new GqlBulkEditExecutionResult();
             executionResult.setSuccessfulNodes(new ArrayList<>());
             executionResult.setFailedNodes(new ArrayList<>());
             executionResult.setErrors(new ArrayList<>());
             executionResult.setUpdatedProperties(0);
 
-            if ((safeUpdates == null || safeUpdates.isEmpty()) &&
-                    (safeTags == null || safeTags.isEmpty()) &&
-                    (safeCategoryIdentifiers == null || safeCategoryIdentifiers.isEmpty())) {
+            if (safeUpdates.isEmpty() && safeClears.isEmpty() && safeTags.isEmpty() && safeCategoryIdentifiers.isEmpty()) {
                 return executionResult;
             }
 
@@ -240,31 +368,51 @@ public class ContentBulkEditOperations {
                         throw new RepositoryException("Node is outside of the requested site");
                     }
 
-                    JCRNodeWrapper translationNode = getTranslationNode(node, normalizedLanguage);
+                    if (!node.hasPermission("jcr:write")) {
+                        throw new RepositoryException("Insufficient permissions to modify " + node.getPath());
+                    }
+
                     int updatedCount = 0;
-
-                    if (safeUpdates != null) {
-                        for (GqlBulkEditUpdateInput update : safeUpdates) {
-                            updatedCount += updateStringProperty(node, normalizedLanguage, update.getName(), update.getValue(), update.isI18n());
-                        }
+                    for (GqlBulkEditUpdateInput update : safeUpdates) {
+                        updatedCount += applyPropertyUpdate(node, update.getName(), update.getValue(), isAppendMode(update.getMode()));
                     }
 
-                    if (safeTags != null && !safeTags.isEmpty()) {
+                    for (String clearName : safeClears) {
+                        updatedCount += clearProperty(node, clearName);
+                    }
+
+                    if (!safeTags.isEmpty()) {
                         ensureMixin(node, "jmix:tagged");
-                        node.setProperty("j:tagList", safeTags.toArray(new String[0]));
+                        List<String> tags = appendTags
+                                ? mergeValues(readStringValues(node, "j:tagList"), safeTags)
+                                : safeTags;
+                        node.setProperty("j:tagList", tags.toArray(new String[0]));
                         updatedCount++;
                     }
 
-                    if (safeCategoryIdentifiers != null && !safeCategoryIdentifiers.isEmpty()) {
+                    if (!safeCategoryIdentifiers.isEmpty()) {
                         ensureMixin(node, "jmix:categorized");
-                        node.setProperty("j:defaultCategory", safeCategoryIdentifiers.toArray(new String[0]));
+                        List<String> categories = appendCategories
+                                ? mergeValues(readStringValues(node, "j:defaultCategory"), safeCategoryIdentifiers)
+                                : safeCategoryIdentifiers;
+                        node.setProperty("j:defaultCategory", categories.toArray(new String[0]));
                         updatedCount++;
                     }
+
+                    // Save per node so a failure never leaves half-applied changes
+                    // from another node in the shared session.
+                    session.save();
 
                     executionResult.getSuccessfulNodes().add(nodeUuid);
                     executionResult.setUpdatedProperties(executionResult.getUpdatedProperties() + updatedCount);
                 } catch (Exception e) {
                     logger.error("Bulk edit failed on node {}", nodeUuid, e);
+                    try {
+                        session.refresh(false);
+                    } catch (RepositoryException refreshError) {
+                        logger.warn("Unable to roll back session after failure on node {}", nodeUuid, refreshError);
+                    }
+
                     executionResult.getFailedNodes().add(nodeUuid);
                     GqlBulkEditExecutionError error = new GqlBulkEditExecutionError();
                     error.setNodeUuid(nodeUuid);
@@ -278,7 +426,6 @@ public class ContentBulkEditOperations {
                 }
             }
 
-            session.save();
             return executionResult;
         });
     }
@@ -286,6 +433,338 @@ public class ContentBulkEditOperations {
     private void ensureJcrTemplate() {
         if (jcrTemplate == null) {
             throw new IllegalStateException("JCRTemplate service is unavailable");
+        }
+    }
+
+    /**
+     * Rejects anonymous access. All operations rely on the calling user's session so that
+     * JCR ACLs apply; guests must never reach a bulk edit entry point.
+     */
+    private JahiaUser requireAuthenticatedUser() {
+        JahiaUser user = JCRSessionFactory.getInstance().getCurrentUser();
+        if (user == null || Constants.GUEST_USERNAME.equals(user.getName())) {
+            throw new SecurityException("Content bulk edit requires an authenticated user");
+        }
+
+        return user;
+    }
+
+    private Locale toLocale(String normalizedLanguage) {
+        return LanguageCodeConverters.languageCodeToLocale(normalizedLanguage.replace('_', '-'));
+    }
+
+    private boolean isAppendMode(String mode) {
+        String trimmed = StringUtils.trimToEmpty(mode);
+        if (trimmed.isEmpty() || "replace".equalsIgnoreCase(trimmed)) {
+            return false;
+        }
+
+        if ("append".equalsIgnoreCase(trimmed)) {
+            return true;
+        }
+
+        throw new IllegalArgumentException("Invalid mode '" + mode + "': expected 'replace' or 'append'");
+    }
+
+    /**
+     * Union of existing and new values, preserving order (existing first) and dropping duplicates.
+     */
+    private List<String> mergeValues(List<String> existing, List<String> additions) {
+        Set<String> merged = new LinkedHashSet<>();
+        if (existing != null) {
+            merged.addAll(existing);
+        }
+
+        merged.addAll(additions);
+        return new ArrayList<>(merged);
+    }
+
+    private GqlBulkEditPropertyDefinition toGqlPropertyDefinition(ExtendedPropertyDefinition propertyDefinition, Locale locale) {
+        GqlBulkEditPropertyDefinition definition = new GqlBulkEditPropertyDefinition();
+        definition.setName(propertyDefinition.getName());
+
+        String label = null;
+        try {
+            label = propertyDefinition.getLabel(locale);
+        } catch (Exception e) {
+            logger.debug("Unable to resolve label for property {}", propertyDefinition.getName(), e);
+        }
+
+        definition.setLabel(StringUtils.defaultIfBlank(label, propertyDefinition.getName()));
+        definition.setRequiredType(PropertyType.nameFromValue(propertyDefinition.getRequiredType()));
+
+        ExtendedNodeType declaringType = propertyDefinition.getDeclaringNodeType();
+        definition.setDeclaringNodeType(declaringType.getName());
+        String declaringLabel = null;
+        try {
+            declaringLabel = declaringType.getLabel(locale);
+        } catch (Exception e) {
+            logger.debug("Unable to resolve label for node type {}", declaringType.getName(), e);
+        }
+
+        definition.setDeclaringNodeTypeLabel(StringUtils.defaultIfBlank(declaringLabel, declaringType.getName()));
+
+        String selectorName = null;
+        try {
+            selectorName = SelectorType.nameFromValue(propertyDefinition.getSelector());
+        } catch (Exception e) {
+            logger.debug("Unknown selector type {} for property {}", propertyDefinition.getSelector(), propertyDefinition.getName());
+        }
+
+        definition.setSelectorType(selectorName);
+
+        List<GqlBulkEditSelectorOption> selectorOptions = new ArrayList<>();
+        Map<String, String> rawOptions = propertyDefinition.getSelectorOptions();
+        if (rawOptions != null) {
+            for (Map.Entry<String, String> entry : rawOptions.entrySet()) {
+                GqlBulkEditSelectorOption option = new GqlBulkEditSelectorOption();
+                option.setName(entry.getKey());
+                option.setValue(entry.getValue());
+                selectorOptions.add(option);
+            }
+        }
+
+        definition.setSelectorOptions(selectorOptions);
+
+        String[] valueConstraints = propertyDefinition.getValueConstraints();
+        definition.setConstraints(valueConstraints != null ? Arrays.asList(valueConstraints) : Collections.emptyList());
+
+        List<String> defaultValues = new ArrayList<>();
+        Value[] rawDefaults = propertyDefinition.getDefaultValues();
+        if (rawDefaults != null) {
+            for (Value defaultValue : rawDefaults) {
+                try {
+                    defaultValues.add(defaultValue.getString());
+                } catch (Exception e) {
+                    logger.debug("Skipping unreadable default value on property {}", propertyDefinition.getName());
+                }
+            }
+        }
+
+        definition.setDefaultValues(defaultValues);
+        definition.setInternationalized(propertyDefinition.isInternationalized());
+        definition.setMultiple(propertyDefinition.isMultiple());
+        definition.setMandatory(propertyDefinition.isMandatory());
+        return definition;
+    }
+
+    /**
+     * Scans active bundles for content-editor fieldset overrides
+     * ({@code META-INF/jahia-content-editor-forms/fieldsets/*.json}) and indexes them by
+     * fieldset (node type) name, then field name. These overrides carry UI metadata that
+     * does not exist in the CND, e.g. {@code selectorType: ChoiceTree} with a
+     * {@code rootPath} scoping a category picker to a subtree.
+     */
+    private Map<String, Map<String, FormFieldOverride>> loadFormFieldOverrides() {
+        Map<String, Map<String, FormFieldOverride>> overrides = new LinkedHashMap<>();
+        Bundle currentBundle = FrameworkUtil.getBundle(getClass());
+        if (currentBundle == null || currentBundle.getBundleContext() == null) {
+            return overrides;
+        }
+
+        for (Bundle bundle : currentBundle.getBundleContext().getBundles()) {
+            if (bundle.getState() != Bundle.ACTIVE) {
+                continue;
+            }
+
+            Enumeration<URL> entries = bundle.findEntries(FORM_FIELDSETS_PATH, "*.json", false);
+            if (entries == null) {
+                continue;
+            }
+
+            while (entries.hasMoreElements()) {
+                URL entry = entries.nextElement();
+                try (InputStream stream = entry.openStream()) {
+                    JsonNode root = OBJECT_MAPPER.readTree(stream);
+                    String fieldSetName = root.path("name").asText(null);
+                    if (StringUtils.isBlank(fieldSetName)) {
+                        continue;
+                    }
+
+                    Map<String, FormFieldOverride> fields = overrides.computeIfAbsent(fieldSetName, key -> new LinkedHashMap<>());
+                    for (JsonNode field : root.path("fields")) {
+                        String fieldName = field.path("name").asText(null);
+                        if (StringUtils.isBlank(fieldName)) {
+                            continue;
+                        }
+
+                        FormFieldOverride override = new FormFieldOverride();
+                        override.selectorType = field.path("selectorType").asText(null);
+                        JsonNode optionsNode = field.path("selectorOptionsMap");
+                        if (optionsNode.isObject()) {
+                            Iterator<Map.Entry<String, JsonNode>> optionFields = optionsNode.fields();
+                            while (optionFields.hasNext()) {
+                                Map.Entry<String, JsonNode> option = optionFields.next();
+                                override.selectorOptions.put(option.getKey(), option.getValue().asText());
+                            }
+                        }
+
+                        fields.put(fieldName, override);
+                    }
+                } catch (IOException e) {
+                    logger.warn("Unable to parse content editor form override {} from bundle {}", entry, bundle.getSymbolicName(), e);
+                }
+            }
+        }
+
+        return overrides;
+    }
+
+    private void applyFormOverride(GqlBulkEditPropertyDefinition definition,
+                                   ExtendedPropertyDefinition propertyDefinition,
+                                   Map<String, Map<String, FormFieldOverride>> formOverrides) {
+        Map<String, FormFieldOverride> fieldSet = formOverrides.get(propertyDefinition.getDeclaringNodeType().getName());
+        if (fieldSet == null) {
+            return;
+        }
+
+        FormFieldOverride override = fieldSet.get(propertyDefinition.getName());
+        if (override == null) {
+            return;
+        }
+
+        if (StringUtils.isNotBlank(override.selectorType)) {
+            definition.setSelectorType(override.selectorType);
+        }
+
+        if (!override.selectorOptions.isEmpty()) {
+            Map<String, String> merged = new LinkedHashMap<>();
+            for (GqlBulkEditSelectorOption option : definition.getSelectorOptions()) {
+                merged.put(option.getName(), option.getValue());
+            }
+
+            merged.putAll(override.selectorOptions);
+
+            List<GqlBulkEditSelectorOption> options = new ArrayList<>(merged.size());
+            for (Map.Entry<String, String> entry : merged.entrySet()) {
+                GqlBulkEditSelectorOption option = new GqlBulkEditSelectorOption();
+                option.setName(entry.getKey());
+                option.setValue(entry.getValue());
+                options.add(option);
+            }
+
+            definition.setSelectorOptions(options);
+        }
+    }
+
+    private static final class FormFieldOverride {
+        private String selectorType;
+        private final Map<String, String> selectorOptions = new LinkedHashMap<>();
+    }
+
+    /**
+     * Applies one bulk value to a node, driven entirely by the applicable property
+     * definition: internationalization is handled by the localized session, cardinality
+     * by {@link ExtendedPropertyDefinition#isMultiple()}, and the string value is coerced
+     * to the definition's required JCR type before writing. For multi-valued properties,
+     * append mode merges the new values into the existing ones (duplicates dropped);
+     * for single-valued properties the mode is ignored.
+     *
+     * @return 1 if the property was written, 0 if it was skipped
+     */
+    private int applyPropertyUpdate(JCRNodeWrapper node, String propertyName, String rawValue, boolean append) throws RepositoryException {
+        if (StringUtils.isBlank(propertyName) || StringUtils.isBlank(rawValue)) {
+            return 0;
+        }
+
+        ExtendedPropertyDefinition definition = node.getApplicablePropertyDefinition(propertyName);
+        if (definition == null) {
+            logger.warn("No applicable definition for property {} on {}; skipping", propertyName, node.getPath());
+            return 0;
+        }
+
+        if (definition.isProtected()) {
+            logger.warn("Property {} on {} is protected; skipping", propertyName, node.getPath());
+            return 0;
+        }
+
+        JCRSessionWrapper session = node.getSession();
+        if (definition.isMultiple()) {
+            List<String> rawValues = Arrays.stream(rawValue.split(","))
+                    .map(String::trim)
+                    .filter(StringUtils::isNotBlank)
+                    .collect(Collectors.toList());
+
+            if (append && node.hasProperty(propertyName)) {
+                Property existingProperty = node.getProperty(propertyName);
+                List<String> existing = new ArrayList<>();
+                if (existingProperty.isMultiple()) {
+                    for (Value existingValue : existingProperty.getValues()) {
+                        if (existingValue != null) {
+                            existing.add(existingValue.getString());
+                        }
+                    }
+                }
+
+                rawValues = mergeValues(existing, rawValues);
+            }
+
+            List<Value> values = new ArrayList<>(rawValues.size());
+            for (String part : rawValues) {
+                values.add(coerceValue(session, definition, part));
+            }
+
+            node.setProperty(propertyName, values.toArray(new Value[0]));
+            return 1;
+        }
+
+        node.setProperty(propertyName, coerceValue(session, definition, rawValue));
+        return 1;
+    }
+
+    /**
+     * Removes a property from the node (the localized session resolves i18n properties to
+     * the current language's translation node). Clearing a mandatory property fails at
+     * save time and is reported as a per-node error.
+     *
+     * @return 1 if the property was removed, 0 if it was absent or protected
+     */
+    private int clearProperty(JCRNodeWrapper node, String propertyName) throws RepositoryException {
+        if (StringUtils.isBlank(propertyName)) {
+            return 0;
+        }
+
+        ExtendedPropertyDefinition definition = node.getApplicablePropertyDefinition(propertyName);
+        if (definition != null && definition.isProtected()) {
+            logger.warn("Property {} on {} is protected; skipping clear", propertyName, node.getPath());
+            return 0;
+        }
+
+        if (!node.hasProperty(propertyName)) {
+            return 0;
+        }
+
+        node.getProperty(propertyName).remove();
+        return 1;
+    }
+
+    /**
+     * Converts the client-supplied string into a typed JCR {@link Value} matching the
+     * definition's required type. References accept a UUID or an absolute path.
+     */
+    private Value coerceValue(JCRSessionWrapper session, ExtendedPropertyDefinition definition, String rawValue) throws RepositoryException {
+        ValueFactory valueFactory = session.getValueFactory();
+        switch (definition.getRequiredType()) {
+            case PropertyType.WEAKREFERENCE:
+            case PropertyType.REFERENCE:
+                JCRNodeWrapper target = rawValue.startsWith("/")
+                        ? session.getNode(rawValue)
+                        : session.getNodeByIdentifier(rawValue);
+                return valueFactory.createValue(target, definition.getRequiredType() == PropertyType.WEAKREFERENCE);
+            case PropertyType.DATE:
+                Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+                calendar.setTimeInMillis(parseInstantValue(rawValue).toEpochMilli());
+                return valueFactory.createValue(calendar);
+            case PropertyType.BOOLEAN:
+                return valueFactory.createValue(Boolean.parseBoolean(rawValue));
+            case PropertyType.LONG:
+                return valueFactory.createValue(Long.parseLong(rawValue));
+            case PropertyType.DOUBLE:
+                return valueFactory.createValue(Double.parseDouble(rawValue));
+            case PropertyType.DECIMAL:
+                return valueFactory.createValue(new BigDecimal(rawValue));
+            default:
+                return valueFactory.createValue(rawValue);
         }
     }
 
@@ -389,20 +868,7 @@ public class ContentBulkEditOperations {
                 .collect(Collectors.toList());
     }
 
-    private List<GqlBulkEditUpdateInput> resolvePropertyUpdates(List<GqlBulkEditUpdateInput> propertyUpdates,
-                                                                List<String> propertyNames,
-                                                                List<String> propertyValues,
-                                                                List<Boolean> propertyInternationalized) {
-        if (propertyNames != null || propertyValues != null || propertyInternationalized != null) {
-            return buildUpdatesFromArrays(propertyNames, propertyValues, propertyInternationalized);
-        }
-
-        return propertyUpdates;
-    }
-
-    private List<GqlBulkEditUpdateInput> buildUpdatesFromArrays(List<String> propertyNames,
-                                                                List<String> propertyValues,
-                                                                List<Boolean> propertyInternationalized) {
+    private List<GqlBulkEditUpdateInput> buildUpdatesFromArrays(List<String> propertyNames, List<String> propertyValues, List<String> propertyModes) {
         if (propertyNames == null || propertyValues == null) {
             return Collections.emptyList();
         }
@@ -413,7 +879,7 @@ public class ContentBulkEditOperations {
             GqlBulkEditUpdateInput update = new GqlBulkEditUpdateInput();
             update.setName(propertyNames.get(i));
             update.setValue(propertyValues.get(i));
-            update.setI18n(propertyInternationalized != null && propertyInternationalized.size() > i && Boolean.TRUE.equals(propertyInternationalized.get(i)));
+            update.setMode(propertyModes != null && propertyModes.size() > i ? propertyModes.get(i) : null);
             updates.add(update);
         }
 
@@ -440,6 +906,11 @@ public class ContentBulkEditOperations {
         return Math.min(limit, MAX_LIMIT);
     }
 
+    /**
+     * Builds the JCR-SQL2 statement. Type, path, full-text and date-range filters are all
+     * pushed into the query so Jackrabbit's index does the narrowing; only publication
+     * status and author remain post-filtered in Java.
+     */
     private String buildSearchQuery(String siteKey, GqlBulkEditSearchFiltersInput filters) {
         StringBuilder query = new StringBuilder();
         String nodeType = filters != null && StringUtils.isNotBlank(filters.getContentType()) ? filters.getContentType() : "nt:base";
@@ -449,8 +920,51 @@ public class ContentBulkEditOperations {
                 .append(escapeSqlLiteral(path))
                 .append("'])");
 
+        if (filters != null) {
+            String fullTextExpression = StringUtils.isNotBlank(filters.getText())
+                    ? escapeFullTextExpression(filters.getText())
+                    : null;
+            if (StringUtils.isNotBlank(fullTextExpression)) {
+                query.append(" AND CONTAINS(item.*, '")
+                        .append(escapeSqlLiteral(fullTextExpression))
+                        .append("')");
+            }
+
+            appendDateRange(query, "j:lastPublished", filters.getPublicationFrom(), filters.getPublicationTo());
+            appendDateRange(query, "jcr:created", filters.getCreationFrom(), filters.getCreationTo());
+            appendDateRange(query, "jcr:lastModified", filters.getModificationFrom(), filters.getModificationTo());
+        }
+
         query.append(" ORDER BY item.[jcr:lastModified] DESC");
         return query.toString();
+    }
+
+    /**
+     * Appends an inclusive [from, to] day-range condition on a date property.
+     * Bounds are UTC day boundaries; the upper bound is exclusive of the next day's start.
+     */
+    private void appendDateRange(StringBuilder query, String propertyName, String from, String to) {
+        if (StringUtils.isNotBlank(from)) {
+            LocalDate fromDate = parseInputDate(from);
+            query.append(" AND item.[").append(propertyName).append("] >= CAST('")
+                    .append(fromDate.format(DATE_INPUT)).append("T00:00:00.000Z' AS DATE)");
+        }
+
+        if (StringUtils.isNotBlank(to)) {
+            LocalDate toDate = parseInputDate(to).plusDays(1);
+            query.append(" AND item.[").append(propertyName).append("] < CAST('")
+                    .append(toDate.format(DATE_INPUT)).append("T00:00:00.000Z' AS DATE)");
+        }
+    }
+
+    /**
+     * Makes user input safe for Jackrabbit's full-text expression parser: metacharacters
+     * with structural meaning are blanked out, the remaining operators are escaped so the
+     * term is matched literally.
+     */
+    private String escapeFullTextExpression(String term) {
+        String neutralized = term.replaceAll("[(){}\\[\\]:^~!?]", " ");
+        return neutralized.replace("\\", "\\\\").replace("\"", "\\\"").replace("-", "\\-").trim();
     }
 
     private String resolveSearchPath(String siteKey, String path) {
@@ -512,7 +1026,7 @@ public class ContentBulkEditOperations {
         }
 
         JCRNodeWrapper translationNode = getTranslationNode(node, language);
-        if (!matchesFilters(node, translationNode, language, filters)) {
+        if (!matchesFilters(node, translationNode, filters)) {
             return null;
         }
 
@@ -536,7 +1050,6 @@ public class ContentBulkEditOperations {
 
     private boolean matchesFilters(JCRNodeWrapper node,
                                    JCRNodeWrapper translationNode,
-                                   String language,
                                    GqlBulkEditSearchFiltersInput filters) throws RepositoryException {
         if (filters == null) {
             return true;
@@ -571,50 +1084,7 @@ public class ContentBulkEditOperations {
             }
         }
 
-        if (StringUtils.isNotBlank(filters.getText()) && !matchesTextSearch(node, language, filters.getText())) {
-            return false;
-        }
-
-        if (!matchesDateFilter(resolveNodeDate(node, translationNode, "j:lastPublished"), filters.getPublicationFrom(), filters.getPublicationTo())) {
-            return false;
-        }
-
-        if (!matchesDateFilter(resolveNodeDate(node, translationNode, "jcr:created"), filters.getCreationFrom(), filters.getCreationTo())) {
-            return false;
-        }
-
-        return matchesDateFilter(resolveNodeDate(node, translationNode, "jcr:lastModified"), filters.getModificationFrom(), filters.getModificationTo());
-    }
-
-    private boolean matchesDateFilter(Calendar value, String from, String to) {
-        if (StringUtils.isBlank(from) && StringUtils.isBlank(to)) {
-            return true;
-        }
-
-        if (value == null) {
-            return false;
-        }
-
-        LocalDate valueDate = LocalDate.of(
-                value.get(Calendar.YEAR),
-                value.get(Calendar.MONTH) + 1,
-                value.get(Calendar.DAY_OF_MONTH)
-        );
-
-        if (StringUtils.isNotBlank(from)) {
-            LocalDate fromBoundary = parseInputDate(from);
-            if (valueDate.isBefore(fromBoundary)) {
-                return false;
-            }
-        }
-
-        if (StringUtils.isNotBlank(to)) {
-            LocalDate toBoundary = parseInputDate(to);
-            if (valueDate.isAfter(toBoundary)) {
-                return false;
-            }
-        }
-
+        // Text and date filters are enforced by the JCR-SQL2 query itself.
         return true;
     }
 
@@ -655,48 +1125,11 @@ public class ContentBulkEditOperations {
         return summary.toString();
     }
 
-    private boolean matchesTextSearch(JCRNodeWrapper node, String language, String term) throws RepositoryException {
-        if (StringUtils.isBlank(term)) {
-            return true;
-        }
-
-        JCRNodeWrapper translationNode = getTranslationNode(node, language);
-        return containsInNode(node, term) || (translationNode != null && containsInNode(translationNode, term));
-    }
-
-    private boolean containsInNode(JCRNodeWrapper node, String term) {
-        try {
-            PropertyIterator properties = node.getProperties();
-            while (properties.hasNext()) {
-                Property property = properties.nextProperty();
-                if (property.getType() != PropertyType.STRING) {
-                    continue;
-                }
-
-                if (property.isMultiple()) {
-                    for (Value value : property.getValues()) {
-                        if (value != null && containsIgnoreCase(value.getString(), term)) {
-                            return true;
-                        }
-                    }
-                    continue;
-                }
-
-                if (containsIgnoreCase(property.getString(), term)) {
-                    return true;
-                }
-            }
-        } catch (RepositoryException e) {
-            logger.debug("Unable to inspect node {}", node, e);
-        }
-
-        return containsIgnoreCase(node.getName(), term) || containsIgnoreCase(node.getPath(), term);
-    }
-
-    private boolean containsIgnoreCase(String value, String term) {
-        return value != null && term != null && value.toLowerCase(Locale.ROOT).contains(term.toLowerCase(Locale.ROOT));
-    }
-
+    /**
+     * Reads the current values of the requested properties directly from the node.
+     * The session is localized, so i18n properties resolve transparently; reference
+     * properties are rendered as the target node's display name.
+     */
     private List<GqlBulkEditPropertyValue> collectPropertyValues(JCRNodeWrapper node, String language, List<String> propertyNames) throws RepositoryException {
         List<GqlBulkEditPropertyValue> values = new ArrayList<>();
         for (String propertyName : propertyNames) {
@@ -704,13 +1137,10 @@ public class ContentBulkEditOperations {
                 continue;
             }
 
-            Map<String, JCRNodeWrapper> holders = new LinkedHashMap<>();
-            collectPropertyHoldersRecursively(node, language, propertyName, null, false, holders);
-            JCRNodeWrapper holder = holders.values().stream().findFirst().orElse(null);
             GqlBulkEditPropertyValue propertyValue = new GqlBulkEditPropertyValue();
             propertyValue.setName(propertyName);
 
-            if (holder == null || !holder.hasProperty(propertyName)) {
+            if (!node.hasProperty(propertyName)) {
                 propertyValue.setMultiple(false);
                 propertyValue.setValue("");
                 propertyValue.setValues(Collections.emptyList());
@@ -718,29 +1148,47 @@ public class ContentBulkEditOperations {
                 continue;
             }
 
-            Property property = holder.getProperty(propertyName);
+            Property property = node.getProperty(propertyName);
             propertyValue.setMultiple(property.isMultiple());
             if (property.isMultiple()) {
-                List<String> multiValues = Arrays.stream(property.getValues())
-                        .map(value -> {
-                            try {
-                                return value != null ? value.getString() : "";
-                            } catch (RepositoryException e) {
-                                return "";
-                            }
-                        })
-                        .collect(Collectors.toList());
+                List<String> multiValues = new ArrayList<>();
+                for (Value value : property.getValues()) {
+                    multiValues.add(renderValue(node, value, language));
+                }
+
                 propertyValue.setValues(multiValues);
                 propertyValue.setValue(String.join(", ", multiValues));
             } else {
-                propertyValue.setValue(property.getString());
-                propertyValue.setValues(Collections.singletonList(property.getString()));
+                String rendered = renderValue(node, property.getValue(), language);
+                propertyValue.setValue(rendered);
+                propertyValue.setValues(Collections.singletonList(rendered));
             }
 
             values.add(propertyValue);
         }
 
         return values;
+    }
+
+    private String renderValue(JCRNodeWrapper node, Value value, String language) {
+        if (value == null) {
+            return "";
+        }
+
+        try {
+            if (value.getType() == PropertyType.REFERENCE || value.getType() == PropertyType.WEAKREFERENCE) {
+                try {
+                    JCRNodeWrapper target = ((JCRSessionWrapper) node.getSession()).getNodeByIdentifier(value.getString());
+                    return resolveDisplayName(target, language);
+                } catch (Exception e) {
+                    return value.getString();
+                }
+            }
+
+            return value.getString();
+        } catch (RepositoryException e) {
+            return "";
+        }
     }
 
     private List<String> readStringValues(JCRNodeWrapper node, String propertyName) throws RepositoryException {
@@ -951,171 +1399,6 @@ public class ContentBulkEditOperations {
         }
 
         node.addMixin(mixinName);
-    }
-
-    private int updateStringProperty(JCRNodeWrapper node,
-                                     String language,
-                                     String propertyName,
-                                     String value,
-                                     boolean internationalized) throws RepositoryException {
-        if (StringUtils.isBlank(propertyName) || StringUtils.isBlank(value)) {
-            return 0;
-        }
-
-        if (internationalized) {
-            Map<String, JCRNodeWrapper> holders = new LinkedHashMap<>();
-            collectWritablePropertyHoldersRecursively(node, propertyName, value, true, holders);
-            if (holders.isEmpty()) {
-                return applyI18nPropertyUpdate(node, propertyName, value, language);
-            }
-
-            int updatedCount = 0;
-            for (JCRNodeWrapper holder : holders.values()) {
-                updatedCount += applyI18nPropertyUpdate(holder, propertyName, value, language);
-            }
-
-            return updatedCount;
-        }
-
-        Map<String, JCRNodeWrapper> existingHolders = new LinkedHashMap<>();
-        collectPropertyHoldersRecursively(node, language, propertyName, value, false, existingHolders);
-
-        if (!existingHolders.isEmpty()) {
-            int updatedCount = 0;
-            for (JCRNodeWrapper holder : existingHolders.values()) {
-                updatedCount += applyStringPropertyUpdate(holder, propertyName, value);
-            }
-
-            return updatedCount;
-        }
-
-        return applyStringPropertyUpdate(node, propertyName, value);
-    }
-
-    private int applyI18nPropertyUpdate(JCRNodeWrapper targetNode,
-                                        String propertyName,
-                                        String value,
-                                        String language) throws RepositoryException {
-        if (targetNode == null || StringUtils.isBlank(propertyName) || StringUtils.isBlank(value) || StringUtils.isBlank(language)) {
-            return 0;
-        }
-
-        targetNode.setProperty(propertyName, value);
-        return 1;
-    }
-
-    private int applyStringPropertyUpdate(JCRNodeWrapper targetNode, String propertyName, String value) throws RepositoryException {
-        if (targetNode == null || StringUtils.isBlank(propertyName) || StringUtils.isBlank(value)) {
-            return 0;
-        }
-
-        if (targetNode.hasProperty(propertyName) && targetNode.getProperty(propertyName).isMultiple()) {
-            String[] values = Arrays.stream(value.split(","))
-                    .map(String::trim)
-                    .filter(StringUtils::isNotBlank)
-                    .toArray(String[]::new);
-            targetNode.setProperty(propertyName, values);
-            return 1;
-        }
-
-        targetNode.setProperty(propertyName, value);
-        return 1;
-    }
-
-    private void collectPropertyHoldersRecursively(JCRNodeWrapper currentNode,
-                                                   String language,
-                                                   String propertyName,
-                                                   String value,
-                                                   boolean includeApplicableTargets,
-                                                   Map<String, JCRNodeWrapper> holders) throws RepositoryException {
-        if (currentNode == null || StringUtils.isBlank(propertyName)) {
-            return;
-        }
-
-        JCRNodeWrapper translationNode = getTranslationNode(currentNode, language);
-        if (translationNode != null) {
-            collectPropertyHoldersInNodeTree(translationNode, propertyName, value, includeApplicableTargets, holders);
-        }
-
-        addPropertyHolder(currentNode, propertyName, value, includeApplicableTargets, holders);
-
-        NodeIterator children = currentNode.getNodes();
-        while (children.hasNext()) {
-            JCRNodeWrapper child = toNodeWrapper((JCRSessionWrapper) currentNode.getSession(), children.nextNode());
-            if (child == null) {
-                continue;
-            }
-
-            String childName = child.getName();
-            if (childName != null && childName.startsWith("j:translation_")) {
-                continue;
-            }
-
-            collectPropertyHoldersRecursively(child, language, propertyName, value, includeApplicableTargets, holders);
-        }
-    }
-
-    private void collectPropertyHoldersInNodeTree(JCRNodeWrapper sourceNode,
-                                                  String propertyName,
-                                                  String value,
-                                                  boolean includeApplicableTargets,
-                                                  Map<String, JCRNodeWrapper> holders) throws RepositoryException {
-        if (sourceNode == null || StringUtils.isBlank(propertyName)) {
-            return;
-        }
-
-        addPropertyHolder(sourceNode, propertyName, value, includeApplicableTargets, holders);
-
-        NodeIterator children = sourceNode.getNodes();
-        while (children.hasNext()) {
-            JCRNodeWrapper child = toNodeWrapper((JCRSessionWrapper) sourceNode.getSession(), children.nextNode());
-            if (child == null) {
-                continue;
-            }
-
-            collectPropertyHoldersInNodeTree(child, propertyName, value, includeApplicableTargets, holders);
-        }
-    }
-
-    private void addPropertyHolder(JCRNodeWrapper node,
-                                   String propertyName,
-                                   String value,
-                                   boolean includeApplicableTargets,
-                                   Map<String, JCRNodeWrapper> holders) throws RepositoryException {
-        if (node == null) {
-            return;
-        }
-
-        if (node.hasProperty(propertyName)) {
-            holders.putIfAbsent(node.getIdentifier(), node);
-        }
-    }
-
-    private void collectWritablePropertyHoldersRecursively(JCRNodeWrapper currentNode,
-                                                           String propertyName,
-                                                           String value,
-                                                           boolean includeApplicableTargets,
-                                                           Map<String, JCRNodeWrapper> holders) throws RepositoryException {
-        if (currentNode == null || StringUtils.isBlank(propertyName)) {
-            return;
-        }
-
-        addPropertyHolder(currentNode, propertyName, value, includeApplicableTargets, holders);
-
-        NodeIterator children = currentNode.getNodes();
-        while (children.hasNext()) {
-            JCRNodeWrapper child = toNodeWrapper((JCRSessionWrapper) currentNode.getSession(), children.nextNode());
-            if (child == null) {
-                continue;
-            }
-
-            String childName = child.getName();
-            if (childName != null && childName.startsWith("j:translation_")) {
-                continue;
-            }
-
-            collectWritablePropertyHoldersRecursively(child, propertyName, value, includeApplicableTargets, holders);
-        }
     }
 
     private JCRNodeWrapper toNodeWrapper(JCRSessionWrapper session, Node node) throws RepositoryException {

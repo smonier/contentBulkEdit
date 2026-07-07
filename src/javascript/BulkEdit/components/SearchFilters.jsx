@@ -8,7 +8,6 @@ export const SearchFilters = ({
     filters,
     validationErrors,
     contentTypes,
-    authors,
     languages,
     selectedLanguage,
     siteKey,
@@ -25,11 +24,6 @@ export const SearchFilters = ({
         {label: t('contentBulkEdit.allTypes'), value: ''},
         ...contentTypes
     ]), [contentTypes, t]);
-
-    const authorOptions = useMemo(() => ([
-        {label: t('contentBulkEdit.allAuthors'), value: ''},
-        ...authors
-    ]), [authors, t]);
 
     const languageOptions = useMemo(() => {
         return (languages || []).map(language => ({
@@ -137,10 +131,10 @@ export const SearchFilters = ({
 
                         <div className={styles.field}>
                             <Typography variant="caption" weight="bold">{t('contentBulkEdit.filters.author')}</Typography>
-                            <Dropdown
-                                data={authorOptions}
+                            <Input
                                 value={filters.author}
-                                onChange={(event, item) => onFilterChange('author', item?.value || '')}
+                                placeholder={t('contentBulkEdit.authorPlaceholder')}
+                                onChange={event => onFilterChange('author', event.target.value)}
                             />
                         </div>
                     </div>
@@ -249,7 +243,6 @@ SearchFilters.propTypes = {
     filters: PropTypes.object.isRequired,
     validationErrors: PropTypes.object.isRequired,
     contentTypes: PropTypes.array.isRequired,
-    authors: PropTypes.array.isRequired,
     languages: PropTypes.array.isRequired,
     selectedLanguage: PropTypes.string.isRequired,
     siteKey: PropTypes.string.isRequired,

@@ -55,8 +55,12 @@ export const ResultsTable = ({
             <Table aria-label={t('contentBulkEdit.resultsTitle')}>
                 <TableHead>
                     <TableRow>
-                        <TableHeadCell>
-                            <Checkbox checked={allSelected} onChange={event => onToggleAll(event.target.checked)}/>
+                        <TableHeadCell className={styles.checkboxCell}>
+                            <Checkbox
+                                checked={allSelected}
+                                aria-label={t('contentBulkEdit.table.select')}
+                                onChange={event => onToggleAll(event.target.checked)}
+                            />
                         </TableHeadCell>
                         <TableHeadCell>{t('contentBulkEdit.table.name')}</TableHeadCell>
                         {orderedColumns.map(column => (
@@ -74,22 +78,42 @@ export const ResultsTable = ({
 
                         return (
                             <TableRow key={node.uuid} className={isSelected ? styles.selectedRow : ''}>
-                                <TableBodyCell>
-                                    <Checkbox checked={isSelected} onChange={event => onToggleRow(node.uuid, event.target.checked)}/>
+                                <TableBodyCell className={styles.checkboxCell}>
+                                    <Checkbox
+                                        checked={isSelected}
+                                        aria-label={t('contentBulkEdit.table.select')}
+                                        onChange={event => onToggleRow(node.uuid, event.target.checked)}
+                                    />
                                 </TableBodyCell>
                                 <TableBodyCell>
-                                    <Typography variant="body" weight="bold">{node.displayName || node.name}</Typography>
+                                    <Typography
+                                        variant="body"
+                                        weight="bold"
+                                        className={`${styles.cellEllipsis} ${styles.nameCell}`}
+                                        title={node.displayName || node.name}
+                                    >
+                                        {node.displayName || node.name}
+                                    </Typography>
                                 </TableBodyCell>
-                                {orderedColumns.map(column => (
-                                    <TableBodyCell key={`${node.uuid}-${column.name}`}>
-                                        <Typography variant="caption">{getPropertyValue(node, column.name)}</Typography>
-                                    </TableBodyCell>
-                                ))}
+                                {orderedColumns.map(column => {
+                                    const propertyValue = getPropertyValue(node, column.name);
+                                    return (
+                                        <TableBodyCell key={`${node.uuid}-${column.name}`}>
+                                            <Typography variant="caption" className={styles.cellEllipsis} title={propertyValue}>
+                                                {propertyValue}
+                                            </Typography>
+                                        </TableBodyCell>
+                                    );
+                                })}
                                 <TableBodyCell>
-                                    <Typography variant="caption">{(node.tags || []).join(', ')}</Typography>
+                                    <Typography variant="caption" className={styles.cellEllipsis} title={(node.tags || []).join(', ')}>
+                                        {(node.tags || []).join(', ')}
+                                    </Typography>
                                 </TableBodyCell>
                                 <TableBodyCell>
-                                    <Typography variant="caption">{(node.categories || []).join(', ')}</Typography>
+                                    <Typography variant="caption" className={styles.cellEllipsis} title={(node.categories || []).join(', ')}>
+                                        {(node.categories || []).join(', ')}
+                                    </Typography>
                                 </TableBodyCell>
                                 <TableBodyCell>
                                     <Button

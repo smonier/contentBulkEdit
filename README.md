@@ -4,36 +4,64 @@ Jahia DX 8 UI extension module for bulk editing content from a query-driven resu
 
 This module adds a `Content bulk edit` entry under the `Content Tools` accordion and provides a React 18 + Moonstone interface to:
 
-- search content with multiple criteria
-- choose which properties to display
+- search content with multiple criteria (index-backed full-text and date filters)
+- choose which properties to display and edit, grouped like Content Editor
 - select matching rows
-- prepare bulk values in a dedicated side panel
-- apply updates for standard properties, tags, and categories
+- prepare typed bulk values in a dedicated side panel
+- apply updates, clears, tags, and categories with per-field replace/append modes
 
 ## Main Features
 
+### Search
+
 - Query form with:
-  - text
+  - full-text search (pushed into the JCR-SQL2 query, `CONTAINS`)
   - path picker
   - content type
   - publication status
-  - author
+  - author (exact username match)
   - language
-  - publication date range
-  - creation date range
-  - last modification date range
-- Dynamic property picker based on the selected content type
-- Forced support for `j:tagList` and `j:defaultCategory`
-- Result table with checkbox selection
+  - publication / creation / last modification date ranges (pushed into the query as indexed range conditions)
+- Criteria panels auto-collapse into a one-line summary bar after a search ("Edit criteria" restores them)
+
+### Property selection
+
+- Property definitions are served by the module's own GraphQL endpoint with full type metadata: required type, selector type, selector options, constraints, default values, i18n, cardinality, and declaring node type
+- Properties are ordered and grouped like Content Editor: the type's own fields first (in CND declaration order), then inherited fields, then one column card per declaring mixin
+- Content Editor fieldset overrides (`META-INF/jahia-content-editor-forms/fieldsets/*.json` in any deployed bundle) are merged in, so a `ChoiceTree` override with a `rootPath` scopes a category field exactly as in Content Editor
+
+### Typed bulk edit fields
+
+The side panel renders each field according to its definition:
+
+| Definition | Widget |
+|---|---|
+| `weakreference` / `reference` + picker | jContent picker (`CE_API.openPicker`), picker type from the CND (`picker[type='image']` opens the image picker) |
+| `category[...]` selector or `ChoiceTree` override | Searchable category tree, scoped to the override's `rootPath` when present |
+| choicelist with static constraints | Dropdown |
+| `boolean` | Yes / No dropdown |
+| `date` | Date / datetime input |
+| `long` / `double` / `decimal` | Number input |
+| rich text / text area | Textarea |
+| anything else | Text input |
+
+- Multi-valued properties get a **replace / append** mode selector; append merges into existing values and drops duplicates
+- Every field has a **"Clear this property"** checkbox to bulk-remove the value (clearing a mandatory property fails per node with a constraint message)
+- Tags and categories have the same replace / append modes
+- The panel footer shows a live recap (rows selected, changes ready) with its own Apply button; when disabled, a tooltip explains what is missing
+
+### Results table
+
+- Sticky header inside a scrollable container, ellipsis + hover tooltips on long values
+- Reference property values are rendered as the target node's display name, not a raw UUID
 - Expandable metadata block for path, status, dates, and author
-- Right-side bulk edit panel for:
-  - selected property values
-  - tags
-  - category multi-selection using Moonstone tree dropdown
-- Backend GraphQL API for content search, category retrieval, and bulk execution
-- Automatic mixin handling for tags and categories:
-  - `jmix:tagged`
-  - `jmix:categorized`
+
+### Security model
+
+- All operations run with the **calling user's JCR session** — ACLs apply naturally to search results and writes
+- Guest access is rejected; every edited node also requires `jcr:write`
+- Bulk execution saves **per node** with a session rollback on failure, so a failed node is left untouched
+- Full-text input is escaped/neutralized before being embedded in the JCR-SQL2 statement
 
 ## Module Layout
 
@@ -42,13 +70,23 @@ src/
   main/
     java/org/jahia/se/modules/contentbulkedit/graphql/
       ContentBulkEditOperations.java
+      ContentBulkEditQueryExtension.java
+      ContentBulkEditMutationExtension.java
       model/
     resources/
-      javascript/locales/
+      javascript/locales/          # en.json, fr.json
   javascript/
     AdminPanel/
     BulkEdit/
       components/
+        BulkEditPanel.jsx          # side panel: fields, modes, clear, footer
+        BulkFieldInput.jsx         # typed field dispatcher (picker, tree, dropdown, ...)
+        CategoryTreeInput.jsx
+        ConfirmDialog.jsx
+        PropertySelector.jsx       # grouped property chips
+        ResultsTable.jsx
+        SearchFilters.jsx
+        SearchSummaryBar.jsx       # collapsed criteria summary
       BulkEdit.gql-queries.js
       BulkEdit.jsx
 ```
@@ -58,7 +96,7 @@ src/
 - Jahia DX 8.2
 - Java / OSGi bundle
 - React 18
-- Moonstone
+- Moonstone (styling uses Moonstone design tokens with static fallbacks)
 - Apollo Client
 - GraphQL Java Annotations
 
@@ -67,7 +105,7 @@ src/
 - Jahia 8.2.x
 - Node `v20.18.0`
 - Yarn `v1.22.10`
-- Maven
+- Maven + Java 17
 
 The Maven build already installs the expected Node and Yarn versions through `frontend-maven-plugin`.
 
@@ -90,7 +128,7 @@ mvn clean package
 ### Fast backend compile check
 
 ```bash
-mvn -q -DskipTests compile
+mvn -q compile -Dskip.yarn=true -Dskip.installnodenpm=true -Dskip.installyarn=true
 ```
 
 ## Installation
@@ -101,19 +139,17 @@ mvn -q -DskipTests compile
 mvn clean package
 ```
 
-2. Deploy the generated bundle to Jahia.
+2. Deploy the generated bundle to Jahia (e.g. `curl -u root:*** -F bundle=@target/contentBulkEdit-<version>.jar -F start=true http://localhost:8080/modules/api/bundles`).
 3. Install the module on the target site.
 4. Open `jContent` and go to `Content Tools > Content bulk edit`.
 
 ## User Flow
 
-1. Select a content type.
-2. Fill in any search criteria.
-3. Run the search.
-4. Select the properties to display and edit.
-5. Select result rows.
-6. Enter bulk values in the right panel.
-7. Confirm and execute.
+1. Select a content type and any search criteria, then run the search (criteria collapse into a summary bar).
+2. Toggle the property chips you want to display and edit — grouped by declaring type, like Content Editor.
+3. Select result rows.
+4. Enter bulk values in the right panel: typed widgets, replace/append for multi-valued fields, clear checkboxes, tags and categories.
+5. Review the recap and confirm — the dialog lists every change including modes and cleared properties.
 
 ## GraphQL API
 
@@ -121,68 +157,53 @@ The module exposes a dedicated GraphQL extension under `contentBulkEdit`.
 
 ### Queries
 
-- `searchContent(...)`
-- `getCategories(siteKey, language)`
+- `searchContent(siteKey, language, text, path, contentType, publicationStatus, dates..., author, properties, limit)`
+- `getCategories(siteKey, language, rootPath)` — `rootPath` optionally scopes the tree to a subtree of `/sites/systemsite/categories`
+- `getPropertyDefinitions(nodeType, language)` — editable property definitions with full type metadata, ordered own type → inherited → mixin groups, with Content Editor fieldset overrides merged in
 
 ### Mutation
 
-- `bulkEditContent(...)`
+- `bulkEditContent(siteKey, language, nodeUuids, propertyNames, propertyValues, propertyModes, clearPropertyNames, tagValues, tagMode, categoryIdentifiers, categoryMode)`
 
-Bulk property updates are sent as parallel arrays:
+Bulk property updates are sent as parallel arrays (`propertyNames` / `propertyValues` / `propertyModes`). Values are always strings; the server resolves the applicable property definition and coerces them to the required JCR type (references accept a UUID or an absolute path; multi-values are comma-separated). Internationalization and cardinality come from the definition — never from the client.
 
-- `propertyNames`
-- `propertyValues`
-- `propertyInternationalized`
-
-This avoids unreliable binding on custom input lists and keeps the mutation payload explicit.
+Modes (`propertyModes`, `tagMode`, `categoryMode`) accept `replace` (default) or `append`; anything else fails the call before any node is touched.
 
 ## Category Handling
 
-Categories are resolved from the Jahia category tree rooted at:
-
-```text
-/sites/systemsite/categories
-```
-
-The backend walks the tree recursively and returns only `jnt:category` nodes while preserving their category-to-category parent relationships for the Moonstone tree dropdown.
-
-## Notes on Property Updates
-
-- Internationalized properties are updated with the selected language.
-- Tags and categories add their required mixins automatically if missing.
-- The module searches properties across the relevant content subtree instead of assuming all values live on the top node.
+Categories are resolved from the Jahia category tree rooted at `/sites/systemsite/categories` (or the requested `rootPath` beneath it). The backend walks the tree recursively and returns only `jnt:category` nodes while preserving parent relationships for the Moonstone tree dropdown. `jmix:tagged` / `jmix:categorized` are added automatically when missing.
 
 ## Localization
 
-Current UI labels are provided in:
+UI labels are provided in:
 
 - `src/main/resources/javascript/locales/en.json`
 - `src/main/resources/javascript/locales/fr.json`
+
+Property, type, and fieldset labels come from the content modules' own resource bundles via the definitions.
 
 ## Troubleshooting
 
 ### Categories not visible
 
-Check:
-
 - the module is redeployed after backend changes
 - the GraphQL field `contentBulkEdit.getCategories` is available
-- categories exist under `/sites/systemsite/categories`
+- categories exist under `/sites/systemsite/categories` (or the field's `rootPath`)
 
 ### Property values not updated
 
-Check:
-
-- the property belongs to the selected content type
+- the property belongs to the selected content type (mixin fields appear only when the mixin is a declared supertype)
 - the selected language is correct for internationalized fields
-- the backend bundle was redeployed after GraphQL or mutation changes
+- the acting user has `jcr:write` on the node — errors are reported per node in the execution result
+
+### A weakreference field shows a text input instead of a picker
+
+- the CND declares a selector (`picker[type='...']`, `category[...]`) or a Content Editor fieldset override provides one — without any selector metadata the field falls back to a raw UUID/path input
 
 ### Frontend build fails on JSX parsing
 
-The module expects:
-
-- `babel.config.js` to include `@babel/preset-react`
-- `.eslintrc.json` to use the Jahia ESLint config with Babel parser options
+- `babel.config.js` must include `@babel/preset-react`
+- `.eslintrc.json` must use the Jahia ESLint config with Babel parser options
 
 ## References
 

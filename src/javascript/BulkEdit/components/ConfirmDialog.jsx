@@ -1,9 +1,24 @@
-import React from 'react';
+import React, {useEffect} from 'react';
 import PropTypes from 'prop-types';
 import {Button, Typography} from '@jahia/moonstone';
 import styles from '../BulkEdit.module.scss';
 
 export const ConfirmDialog = ({t, isOpen, summary, onCancel, onConfirm, isLoading}) => {
+    useEffect(() => {
+        if (!isOpen) {
+            return;
+        }
+
+        const handleKeyDown = event => {
+            if (event.key === 'Escape') {
+                onCancel();
+            }
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [isOpen, onCancel]);
+
     if (!isOpen) {
         return null;
     }
@@ -24,15 +39,28 @@ export const ConfirmDialog = ({t, isOpen, summary, onCancel, onConfirm, isLoadin
                     </Typography>
                     {summary.properties.map(item => (
                         <Typography key={item.name} variant="body">
-                            {item.label}: {item.value}
+                            {item.label}: {item.displayValue || item.value}
+                            {item.mode === 'append' ? ` (${t('contentBulkEdit.modeAppend')})` : ''}
                         </Typography>
                     ))}
                 </div>
+
+                {summary.clears?.length > 0 && (
+                    <div className={styles.summaryBlock}>
+                        <Typography variant="subheading" weight="bold">
+                            {t('contentBulkEdit.summaryCleared')}
+                        </Typography>
+                        <Typography variant="body">
+                            {summary.clears.map(cleared => cleared.label).join(', ')}
+                        </Typography>
+                    </div>
+                )}
 
                 {summary.tags.length > 0 && (
                     <div className={styles.summaryBlock}>
                         <Typography variant="subheading" weight="bold">
                             {t('contentBulkEdit.summaryTags')}
+                            {summary.tagMode === 'append' ? ` (${t('contentBulkEdit.modeAppend')})` : ` (${t('contentBulkEdit.modeReplace')})`}
                         </Typography>
                         <Typography variant="body">{summary.tags.join(', ')}</Typography>
                     </div>
@@ -42,6 +70,7 @@ export const ConfirmDialog = ({t, isOpen, summary, onCancel, onConfirm, isLoadin
                     <div className={styles.summaryBlock}>
                         <Typography variant="subheading" weight="bold">
                             {t('contentBulkEdit.summaryCategories')}
+                            {summary.categoryMode === 'append' ? ` (${t('contentBulkEdit.modeAppend')})` : ` (${t('contentBulkEdit.modeReplace')})`}
                         </Typography>
                         <Typography variant="body">{summary.categories.join(', ')}</Typography>
                     </div>

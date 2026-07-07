@@ -18,7 +18,7 @@ export const GET_CONTENT_TYPES_QUERY = gql`
             nodeTypes(filter: {
                 includeMixins: false,
                 siteKey: $siteKey,
-                includeTypes: ["jmix:mainResource", "jnt:page", "jnt:file"],
+                includeTypes: ["jmix:editorialContent","jmix:mainResource", "jnt:page", "jnt:file"],
                 excludeTypes: ["jmix:studioOnly", "jmix:hiddenType", "jnt:editableFile"]
             }) {
                 nodes {
@@ -31,38 +31,24 @@ export const GET_CONTENT_TYPES_QUERY = gql`
     }
 `;
 
-export const GET_CONTENT_PROPERTIES_QUERY = gql`
-    query GetContentPropertiesQuery($type: String!, $language: String!) {
-        jcr {
-            nodeTypes(filter: {includeTypes: [$type]}) {
-                nodes {
-                    properties(fieldFilter: {filters: [{fieldName: "hidden", value: "false"}]}) {
-                        name
-                        hidden
-                        displayName(language: $language)
-                        internationalized
-                        mandatory
-                        protected
-                        multiple
-                    }
-                }
-            }
-        }
-    }
-`;
-
-export const GET_ALL_USERS_QUERY = gql`
-    query GetAllUsers {
-        jcr {
-            nodesByQuery(
-                query: "SELECT * FROM [jnt:user]"
-                queryLanguage: SQL2
-            ) {
-                nodes {
+export const GET_PROPERTY_DEFINITIONS_QUERY = gql`
+    query GetPropertyDefinitionsQuery($type: String!, $language: String!) {
+        contentBulkEdit {
+            getPropertyDefinitions(nodeType: $type, language: $language) {
+                name
+                label
+                requiredType
+                selectorType
+                declaringNodeType
+                declaringNodeTypeLabel
+                internationalized
+                multiple
+                mandatory
+                constraints
+                defaultValues
+                selectorOptions {
                     name
-                    property(name: "j:email") {
-                        value
-                    }
+                    value
                 }
             }
         }
@@ -70,9 +56,9 @@ export const GET_ALL_USERS_QUERY = gql`
 `;
 
 export const GET_CATEGORIES_QUERY = gql`
-    query GetCategories($siteKey: String!, $language: String!) {
+    query GetCategories($siteKey: String!, $language: String!, $rootPath: String) {
         contentBulkEdit {
-            getCategories(siteKey: $siteKey, language: $language) {
+            getCategories(siteKey: $siteKey, language: $language, rootPath: $rootPath) {
                 identifier
                 parentIdentifier
                 path
@@ -155,9 +141,12 @@ export const BULK_EDIT_MUTATION = gql`
         $nodeUuids: [String!]!
         $propertyNames: [String!]
         $propertyValues: [String!]
-        $propertyInternationalized: [Boolean!]
+        $propertyModes: [String!]
+        $clearPropertyNames: [String!]
         $tagValues: [String!]
+        $tagMode: String
         $categoryIdentifiers: [String!]
+        $categoryMode: String
     ) {
         contentBulkEdit {
             bulkEditContent(
@@ -166,9 +155,12 @@ export const BULK_EDIT_MUTATION = gql`
                 nodeUuids: $nodeUuids
                 propertyNames: $propertyNames
                 propertyValues: $propertyValues
-                propertyInternationalized: $propertyInternationalized
+                propertyModes: $propertyModes
+                clearPropertyNames: $clearPropertyNames
                 tagValues: $tagValues
+                tagMode: $tagMode
                 categoryIdentifiers: $categoryIdentifiers
+                categoryMode: $categoryMode
             ) {
                 successfulNodes
                 failedNodes

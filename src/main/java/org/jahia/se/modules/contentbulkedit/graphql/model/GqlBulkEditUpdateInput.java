@@ -1,16 +1,16 @@
 package org.jahia.se.modules.contentbulkedit.graphql.model;
 
-import graphql.annotations.annotationTypes.GraphQLField;
-import graphql.annotations.annotationTypes.GraphQLName;
-
-@GraphQLName("ContentBulkEditUpdateInput")
+/**
+ * Internal DTO pairing a property name with its raw (string) bulk value.
+ * Type coercion and internationalization are resolved server-side from the
+ * applicable property definition, never from the client.
+ */
 public class GqlBulkEditUpdateInput {
 
     private String name;
     private String value;
-    private boolean i18n;
+    private String mode;
 
-    @GraphQLField
     public String getName() {
         return name;
     }
@@ -19,7 +19,6 @@ public class GqlBulkEditUpdateInput {
         this.name = name;
     }
 
-    @GraphQLField
     public String getValue() {
         return value;
     }
@@ -28,12 +27,11 @@ public class GqlBulkEditUpdateInput {
         this.value = value;
     }
 
-    @GraphQLField
-    public boolean isI18n() {
-        return i18n;
+    public String getMode() {
+        return mode;
     }
 
-    public void setI18n(boolean i18n) {
-        this.i18n = i18n;
+    public void setMode(String mode) {
+        this.mode = mode;
     }
 }

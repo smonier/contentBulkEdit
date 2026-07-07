@@ -5,9 +5,8 @@ import PropTypes from 'prop-types';
 import {useTranslation} from 'react-i18next';
 import {
     BULK_EDIT_MUTATION,
-    GET_ALL_USERS_QUERY,
     GET_CATEGORIES_QUERY,
-    GET_CONTENT_PROPERTIES_QUERY,
+    GET_PROPERTY_DEFINITIONS_QUERY,
     GET_CONTENT_TYPES_QUERY,
     GET_SITE_LANGUAGES_QUERY,
     SEARCH_CONTENT_QUERY
@@ -17,6 +16,7 @@ import {ConfirmDialog} from './components/ConfirmDialog';
 import {PropertySelector} from './components/PropertySelector';
 import {ResultsTable} from './components/ResultsTable';
 import {SearchFilters} from './components/SearchFilters';
+import {SearchSummaryBar} from './components/SearchSummaryBar';
 import styles from './BulkEdit.module.scss';
 
 const defaultFilters = {
@@ -49,11 +49,16 @@ export const BulkEdit = ({match}) => {
     const [selectedProperties, setSelectedProperties] = useState([]);
     const [selectedNodes, setSelectedNodes] = useState([]);
     const [bulkValues, setBulkValues] = useState({});
+    const [clearFlags, setClearFlags] = useState({});
+    const [propertyModes, setPropertyModes] = useState({});
+    const [tagMode, setTagMode] = useState('replace');
+    const [categoryMode, setCategoryMode] = useState('replace');
     const [selectedCategoryIds, setSelectedCategoryIds] = useState([]);
     const [selectedCategoryLabels, setSelectedCategoryLabels] = useState([]);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [lastSearchVariables, setLastSearchVariables] = useState(null);
     const [searchValidationErrors, setSearchValidationErrors] = useState({});
+    const [filtersCollapsed, setFiltersCollapsed] = useState(false);
 
     const {data: languagesData} = useQuery(GET_SITE_LANGUAGES_QUERY, {
         variables: {workspace: 'EDIT', scope: sitePath},
@@ -65,13 +70,12 @@ export const BulkEdit = ({match}) => {
         skip: !siteKey
     });
 
-    const {data: authorsData} = useQuery(GET_ALL_USERS_QUERY);
     const {data: categoryData} = useQuery(GET_CATEGORIES_QUERY, {
         variables: {siteKey, language: selectedLanguage},
         skip: !siteKey
     });
 
-    const {data: propertiesData, loading: loadingProperties} = useQuery(GET_CONTENT_PROPERTIES_QUERY, {
+    const {data: propertiesData, loading: loadingProperties} = useQuery(GET_PROPERTY_DEFINITIONS_QUERY, {
         variables: {type: filters.contentType, language: selectedLanguage},
         skip: !filters.contentType
     });
@@ -157,29 +161,25 @@ export const BulkEdit = ({match}) => {
             .sort((left, right) => left.label.localeCompare(right.label));
     }, [contentTypesData]);
 
-    const authors = useMemo(() => {
-        const nodes = authorsData?.jcr?.nodesByQuery?.nodes || [];
-        return nodes
-            .filter(Boolean)
-            .map(node => ({
-                label: node.property?.value ? `${node.name} (${node.property.value})` : node.name,
-                value: node.name
-            }))
-            .sort((left, right) => left.label.localeCompare(right.label));
-    }, [authorsData]);
-
     const properties = useMemo(() => {
-        const nodes = propertiesData?.jcr?.nodeTypes?.nodes || [];
-        const rawProperties = nodes[0]?.properties || [];
+        const rawProperties = propertiesData?.contentBulkEdit?.getPropertyDefinitions || [];
         return rawProperties
-            .filter(property => property && !property.hidden && !property.protected && !['j:tagList', 'j:defaultCategory'].includes(property.name))
+            .filter(property => property && !['j:tagList', 'j:defaultCategory'].includes(property.name))
             .map(property => ({
                 name: property.name,
-                label: property.displayName || property.name,
+                label: property.label || property.name,
                 i18n: Boolean(property.internationalized),
-                multiple: Boolean(property.multiple)
-            }))
-            .sort((left, right) => left.label.localeCompare(right.label));
+                multiple: Boolean(property.multiple),
+                mandatory: Boolean(property.mandatory),
+                requiredType: property.requiredType,
+                selectorType: property.selectorType,
+                declaringNodeType: property.declaringNodeType,
+                declaringNodeTypeLabel: property.declaringNodeTypeLabel,
+                selectorOptions: property.selectorOptions || [],
+                constraints: property.constraints || [],
+                defaultValues: property.defaultValues || []
+            }));
+        // Server order mirrors content editor: own fields, inherited fields, then mixins.
     }, [propertiesData]);
 
     const propertyLabels = useMemo(() => {
@@ -221,6 +221,8 @@ export const BulkEdit = ({match}) => {
             setSelectedProperties([]);
             setSelectedNodes([]);
             setBulkValues({});
+            setClearFlags({});
+            setPropertyModes({});
             setSelectedCategoryIds([]);
             setSelectedCategoryLabels([]);
         }
@@ -259,6 +261,7 @@ export const BulkEdit = ({match}) => {
 
         setLastSearchVariables(variables);
         setSelectedNodes([]);
+        setFiltersCollapsed(true);
         executeSearch({variables});
     };
 
@@ -268,9 +271,14 @@ export const BulkEdit = ({match}) => {
         setSelectedProperties([]);
         setSelectedNodes([]);
         setBulkValues({});
+        setClearFlags({});
+        setPropertyModes({});
+        setTagMode('replace');
+        setCategoryMode('replace');
         setSelectedCategoryIds([]);
         setSelectedCategoryLabels([]);
         setSearchValidationErrors({});
+        setFiltersCollapsed(false);
     };
 
     const handleToggleAll = checked => {
@@ -285,21 +293,44 @@ export const BulkEdit = ({match}) => {
         setBulkValues(prev => ({...prev, [name]: value}));
     };
 
+    const handleToggleClear = (name, checked) => {
+        setClearFlags(prev => ({...prev, [name]: checked}));
+    };
+
+    const handlePropertyModeChange = (name, mode) => {
+        setPropertyModes(prev => ({...prev, [name]: mode}));
+    };
+
     const handleCategoryChange = (identifiers, labels) => {
         setSelectedCategoryIds(identifiers);
         setSelectedCategoryLabels(labels);
     };
 
-    const updates = useMemo(() => {
+    const clearedProperties = useMemo(() => {
         return selectedProperties
-            .filter(property => Boolean(bulkValues[property]))
+            .filter(property => Boolean(clearFlags[property]))
             .map(property => ({
                 name: property,
-                label: propertyLabels[property] || property,
-                value: bulkValues[property],
-                i18n: Boolean(propertyDefinitions[property]?.i18n)
+                label: propertyLabels[property] || property
             }));
-    }, [bulkValues, propertyDefinitions, propertyLabels, selectedProperties]);
+    }, [clearFlags, propertyLabels, selectedProperties]);
+
+    const updates = useMemo(() => {
+        return selectedProperties
+            .filter(property => !clearFlags[property] && Boolean(bulkValues[property]))
+            .map(property => {
+                const rawValue = bulkValues[property];
+                const isPickerValue = typeof rawValue === 'object' && rawValue !== null;
+                return {
+                    name: property,
+                    label: propertyLabels[property] || property,
+                    value: isPickerValue ? rawValue.uuid : rawValue,
+                    displayValue: isPickerValue ? rawValue.label : rawValue,
+                    mode: propertyModes[property] || 'replace'
+                };
+            })
+            .filter(update => Boolean(update.value));
+    }, [bulkValues, clearFlags, propertyLabels, propertyModes, selectedProperties]);
 
     const tagValues = useMemo(() => {
         return (bulkValues.tags || '')
@@ -308,13 +339,20 @@ export const BulkEdit = ({match}) => {
             .filter(Boolean);
     }, [bulkValues.tags]);
 
-    const canExecute = selectedNodes.length > 0 && (updates.length > 0 || tagValues.length > 0 || selectedCategoryIds.length > 0);
+    const changesCount = updates.length + clearedProperties.length +
+        (tagValues.length > 0 ? 1 : 0) + (selectedCategoryIds.length > 0 ? 1 : 0);
+    const canExecute = selectedNodes.length > 0 && changesCount > 0;
+
+    const selectedTypeLabel = contentTypes.find(type => type.value === filters.contentType)?.label || filters.contentType;
 
     const summary = {
         count: selectedNodes.length,
         properties: updates,
+        clears: clearedProperties,
         tags: tagValues,
-        categories: selectedCategoryLabels
+        tagMode,
+        categories: selectedCategoryLabels,
+        categoryMode
     };
 
     const handleOpenConfirm = () => {
@@ -340,9 +378,12 @@ export const BulkEdit = ({match}) => {
                     nodeUuids: selectedNodes,
                     propertyNames: updates.map(update => update.name),
                     propertyValues: updates.map(update => update.value),
-                    propertyInternationalized: updates.map(update => update.i18n),
+                    propertyModes: updates.map(update => update.mode),
+                    clearPropertyNames: clearedProperties.length > 0 ? clearedProperties.map(cleared => cleared.name) : null,
                     tagValues: tagValues.length > 0 ? tagValues : null,
-                    categoryIdentifiers: selectedCategoryIds.length > 0 ? selectedCategoryIds : null
+                    tagMode,
+                    categoryIdentifiers: selectedCategoryIds.length > 0 ? selectedCategoryIds : null,
+                    categoryMode
                 }
             });
 
@@ -357,6 +398,7 @@ export const BulkEdit = ({match}) => {
 
             setSelectedNodes([]);
             setBulkValues({});
+            setClearFlags({});
             setSelectedCategoryIds([]);
             setSelectedCategoryLabels([]);
 
@@ -396,18 +438,29 @@ export const BulkEdit = ({match}) => {
 
             <LayoutContent content={(
                 <div className={styles.root}>
-                    <SearchFilters
-                        t={t}
-                        filters={filters}
-                        validationErrors={searchValidationErrors}
-                        contentTypes={contentTypes}
-                        authors={authors}
-                        languages={languages.length > 0 ? languages : [selectedLanguage]}
-                        selectedLanguage={selectedLanguage}
-                        siteKey={siteKey}
-                        onFilterChange={handleFilterChange}
-                        onLanguageChange={setSelectedLanguage}
-                    />
+                    {filtersCollapsed ? (
+                        <SearchSummaryBar
+                            t={t}
+                            filters={filters}
+                            typeLabel={selectedTypeLabel}
+                            language={selectedLanguage}
+                            resultsCount={searchResultCount}
+                            selectedCount={selectedNodes.length}
+                            onEdit={() => setFiltersCollapsed(false)}
+                        />
+                    ) : (
+                        <SearchFilters
+                            t={t}
+                            filters={filters}
+                            validationErrors={searchValidationErrors}
+                            contentTypes={contentTypes}
+                            languages={languages.length > 0 ? languages : [selectedLanguage]}
+                            selectedLanguage={selectedLanguage}
+                            siteKey={siteKey}
+                            onFilterChange={handleFilterChange}
+                            onLanguageChange={setSelectedLanguage}
+                        />
+                    )}
 
                     <PropertySelector
                         t={t}
@@ -460,17 +513,29 @@ export const BulkEdit = ({match}) => {
 
                         <BulkEditPanel
                             t={t}
+                            siteKey={siteKey}
                             selectedProperties={selectedProperties}
                             propertyLabels={propertyLabels}
                             propertyDefinitions={propertyDefinitions}
                             selectedLanguage={selectedLanguage}
                             bulkValues={bulkValues}
+                            clearFlags={clearFlags}
+                            propertyModes={propertyModes}
+                            tagMode={tagMode}
+                            categoryMode={categoryMode}
                             categoryData={categoryTreeData}
                             selectedCategoryIds={selectedCategoryIds}
                             selectedCategoryLabels={selectedCategoryLabels}
                             selectedRowsCount={selectedNodes.length}
+                            changesCount={changesCount}
+                            isApplyEnabled={canExecute}
                             onBulkValueChange={handleBulkValueChange}
+                            onToggleClear={handleToggleClear}
+                            onPropertyModeChange={handlePropertyModeChange}
+                            onTagModeChange={setTagMode}
+                            onCategoryModeChange={setCategoryMode}
                             onCategoryChange={handleCategoryChange}
+                            onApply={handleOpenConfirm}
                         />
                     </div>
                 </div>
