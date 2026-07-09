@@ -272,6 +272,13 @@ public class ContentBulkEditOperations {
             throw new IllegalArgumentException("Unknown node type: " + trimmedType);
         }
 
+        // Only expose the property model of editorial content types (the same set the
+        // Content Bulk Edit UI offers) so the endpoint cannot enumerate arbitrary system
+        // types (e.g. jnt:user) for any authenticated user.
+        if (!isEditorialContentType(type)) {
+            throw new IllegalArgumentException("Property definitions are only available for editorial content types");
+        }
+
         Map<String, Map<String, FormFieldOverride>> formOverrides = loadFormFieldOverrides();
 
         // Collect one definition per property name, preferring the most specific declaring
@@ -312,6 +319,13 @@ public class ContentBulkEditOperations {
         result.addAll(inheritedDefinitions);
         mixinGroups.values().forEach(result::addAll);
         return result;
+    }
+
+    private boolean isEditorialContentType(ExtendedNodeType type) {
+        return type.isNodeType("jmix:editorialContent")
+                || type.isNodeType("jmix:mainResource")
+                || type.isNodeType("jnt:page")
+                || type.isNodeType("jnt:file");
     }
 
     private int declarationPriority(ExtendedPropertyDefinition propertyDefinition, String requestedType) {
@@ -1054,7 +1068,7 @@ public class ContentBulkEditOperations {
             trimmedPath = siteRoot + "/" + trimmedPath;
         }
 
-        if (!trimmedPath.startsWith(siteRoot)) {
+        if (!(trimmedPath.equals(siteRoot) || trimmedPath.startsWith(siteRoot + "/"))) {
             throw new IllegalArgumentException("The path must stay inside the current site");
         }
 
