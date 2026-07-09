@@ -32,9 +32,9 @@ export const GET_CONTENT_TYPES_QUERY = gql`
 `;
 
 export const GET_PROPERTY_DEFINITIONS_QUERY = gql`
-    query GetPropertyDefinitionsQuery($type: String!, $language: String!) {
+    query GetPropertyDefinitionsQuery($siteKey: String!, $type: String!, $language: String!) {
         contentBulkEdit {
-            getPropertyDefinitions(nodeType: $type, language: $language) {
+            getPropertyDefinitions(siteKey: $siteKey, nodeType: $type, language: $language) {
                 name
                 label
                 requiredType

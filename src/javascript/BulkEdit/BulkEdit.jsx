@@ -79,8 +79,8 @@ export const BulkEdit = ({match}) => {
     });
 
     const {data: propertiesData, loading: loadingProperties} = useQuery(GET_PROPERTY_DEFINITIONS_QUERY, {
-        variables: {type: filters.contentType, language: selectedLanguage},
-        skip: !filters.contentType
+        variables: {siteKey, type: filters.contentType, language: selectedLanguage},
+        skip: !siteKey || !filters.contentType
     });
 
     const [executeSearch, {data: searchData, loading: searching}] = useLazyQuery(SEARCH_CONTENT_QUERY, {

@@ -252,12 +252,15 @@ public class ContentBulkEditOperations {
 
     @GraphQLField
     @GraphQLName("getPropertyDefinitions")
-    @GraphQLDescription("Editable property definitions of a node type with full type metadata (required type, selector, constraints)")
+    @GraphQLDescription("Editable property definitions of a node type with full type metadata (required type, selector, constraints). Requires jContent access on the site.")
     public List<GqlBulkEditPropertyDefinition> getPropertyDefinitions(
+            @GraphQLName("siteKey") @GraphQLNonNull String siteKey,
             @GraphQLName("nodeType") @GraphQLNonNull String nodeType,
             @GraphQLName("language") String language
     ) throws RepositoryException {
-        requireAuthenticatedUser();
+        ensureJcrTemplate();
+        JahiaUser user = requireAuthenticatedUser();
+        final String validatedSiteKey = validateSiteKey(siteKey);
 
         String trimmedType = StringUtils.trimToNull(nodeType);
         if (trimmedType == null || !NODE_TYPE_PATTERN.matcher(trimmedType).matches()) {
@@ -265,11 +268,36 @@ public class ContentBulkEditOperations {
         }
 
         final Locale locale = toLocale(normalizeLanguage(language));
+
+        // Content-model metadata is editor-facing: gate it on the same permission that
+        // grants access to jContent (where this panel lives) on the requested site.
+        jcrTemplate.doExecute(user, Constants.EDIT_WORKSPACE, locale, session -> {
+            JCRNodeWrapper siteNode;
+            try {
+                siteNode = session.getNode("/sites/" + validatedSiteKey);
+            } catch (javax.jcr.PathNotFoundException e) {
+                throw new IllegalArgumentException("Unknown site: " + validatedSiteKey);
+            }
+
+            if (!siteNode.hasPermission("jContentAccess")) {
+                throw new SecurityException("Insufficient permissions to browse property definitions on site " + validatedSiteKey);
+            }
+
+            return null;
+        });
+
         ExtendedNodeType type;
         try {
             type = NodeTypeRegistry.getInstance().getNodeType(trimmedType);
         } catch (NoSuchNodeTypeException e) {
             throw new IllegalArgumentException("Unknown node type: " + trimmedType);
+        }
+
+        // Only expose the property model of editorial content types (the same set the
+        // Content Bulk Edit UI offers) so the endpoint cannot enumerate arbitrary system
+        // types (e.g. jnt:user) for any authenticated user.
+        if (!isEditorialContentType(type)) {
+            throw new IllegalArgumentException("Property definitions are only available for editorial content types");
         }
 
         Map<String, Map<String, FormFieldOverride>> formOverrides = loadFormFieldOverrides();
@@ -312,6 +340,13 @@ public class ContentBulkEditOperations {
         result.addAll(inheritedDefinitions);
         mixinGroups.values().forEach(result::addAll);
         return result;
+    }
+
+    private boolean isEditorialContentType(ExtendedNodeType type) {
+        return type.isNodeType("jmix:editorialContent")
+                || type.isNodeType("jmix:mainResource")
+                || type.isNodeType("jnt:page")
+                || type.isNodeType("jnt:file");
     }
 
     private int declarationPriority(ExtendedPropertyDefinition propertyDefinition, String requestedType) {
@@ -1054,8 +1089,6 @@ public class ContentBulkEditOperations {
             trimmedPath = siteRoot + "/" + trimmedPath;
         }
 
-        // Exact boundary check: a prefixed sibling site key (e.g. /sites/luxeX for
-        // siteKey "luxe") must not satisfy the scope.
         if (!(trimmedPath.equals(siteRoot) || trimmedPath.startsWith(siteRoot + "/"))) {
             throw new IllegalArgumentException("The path must stay inside the current site");
         }
