@@ -68,9 +68,13 @@ The side panel renders each field according to its definition:
 ### Security model
 
 - All operations run with the **calling user's JCR session** — ACLs apply naturally to search results and writes
-- Guest access is rejected; every edited node also requires `jcr:write`
+- Guest access is rejected; every edited node also requires `jcr:write`, and bulk publish requires the `publish` permission per node
 - Bulk execution saves **per node** with a session rollback on failure, so a failed node is left untouched
 - Full-text input is escaped/neutralized before being embedded in the JCR-SQL2 statement
+- `getPropertyDefinitions` requires a `siteKey` and gates on the `jContentAccess` permission for that site — the same permission that grants access to the jContent UI — and only exposes editorial content types, so the content model of system types (e.g. `jnt:user`) cannot be enumerated
+- Site path scope uses an exact boundary check (`/sites/x` and `/sites/x/…` only), so a prefixed sibling site key cannot widen the scope
+
+> Versions ≤ 1.0.1 ran every operation in a system session without authorization (JCR ACL bypass). Upgrade to ≥ 1.1.0. Further authorization hardening landed in 1.2.1.
 
 ## Module Layout
 
@@ -168,7 +172,7 @@ The module exposes a dedicated GraphQL extension under `contentBulkEdit`.
 
 - `searchContent(siteKey, language, text, path, contentType, publicationStatus, dates..., author, properties, limit)`
 - `getCategories(siteKey, language, rootPath)` — `rootPath` optionally scopes the tree to a subtree of `/sites/systemsite/categories`
-- `getPropertyDefinitions(nodeType, language)` — editable property definitions with full type metadata, ordered own type → inherited → mixin groups, with Content Editor fieldset overrides merged in
+- `getPropertyDefinitions(siteKey, nodeType, language)` — editable property definitions with full type metadata, ordered own type → inherited → mixin groups, with Content Editor fieldset overrides merged in. Requires `jContentAccess` on the site; `nodeType` must be an editorial content type.
 
 ### Mutations
 

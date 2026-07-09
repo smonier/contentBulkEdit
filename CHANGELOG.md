@@ -5,6 +5,32 @@ All notable changes to this module are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-07-09
+
+Security hardening from an authorized security review (issue #1).
+
+### Security
+
+- **`getPropertyDefinitions` authorization** (finding 2): the field previously required only
+  an authenticated user, letting anyone enumerate the property model of any node type
+  (`jnt:user`, `jnt:virtualsite`, …) plus content-editor form overrides from all bundles.
+  It now takes a mandatory `siteKey`, gates on the `jContentAccess` permission for that site,
+  and only exposes editorial content types. (PRs #2, #3)
+- **Exact site path boundary** (finding 3): `resolveSearchPath` and the `matchesFilters` path
+  filter used a plain prefix check, so a prefixed sibling site key (e.g. `/sites/luxeX` for
+  `luxe`) could satisfy the scope. Both now require an exact match or a `/`-delimited
+  descendant. (PRs #2, #4)
+
+### Changed
+
+- `getPropertyDefinitions` now requires a `siteKey` argument (breaking change to the module's
+  own GraphQL field; the module UI is updated accordingly).
+
+### Note
+
+- The system-session ACL bypass affecting ≤ 1.0.1 (finding 1) was already fixed in 1.1.0.
+  Anyone still on ≤ 1.0.1 should upgrade to ≥ 1.1.0.
+
 ## [1.2.0] - 2026-07-07
 
 Publication awareness and table ergonomics.
