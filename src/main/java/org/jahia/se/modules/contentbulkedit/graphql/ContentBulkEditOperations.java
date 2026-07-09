@@ -1170,7 +1170,8 @@ public class ContentBulkEditOperations {
 
         if (StringUtils.isNotBlank(filters.getPath())) {
             String normalizedPath = resolveSearchPath(extractSiteKeyFromPath(node.getPath()), filters.getPath());
-            if (!node.getPath().startsWith(normalizedPath)) {
+            // Same exact-boundary rule as resolveSearchPath: /sites/x/foo must not match /sites/x/foobar
+            if (!(node.getPath().equals(normalizedPath) || node.getPath().startsWith(normalizedPath + "/"))) {
                 return false;
             }
         }
