@@ -252,12 +252,15 @@ public class ContentBulkEditOperations {
 
     @GraphQLField
     @GraphQLName("getPropertyDefinitions")
-    @GraphQLDescription("Editable property definitions of a node type with full type metadata (required type, selector, constraints)")
+    @GraphQLDescription("Editable property definitions of a node type with full type metadata (required type, selector, constraints). Requires jContent access on the site.")
     public List<GqlBulkEditPropertyDefinition> getPropertyDefinitions(
+            @GraphQLName("siteKey") @GraphQLNonNull String siteKey,
             @GraphQLName("nodeType") @GraphQLNonNull String nodeType,
             @GraphQLName("language") String language
     ) throws RepositoryException {
-        requireAuthenticatedUser();
+        ensureJcrTemplate();
+        JahiaUser user = requireAuthenticatedUser();
+        final String validatedSiteKey = validateSiteKey(siteKey);
 
         String trimmedType = StringUtils.trimToNull(nodeType);
         if (trimmedType == null || !NODE_TYPE_PATTERN.matcher(trimmedType).matches()) {
@@ -265,6 +268,24 @@ public class ContentBulkEditOperations {
         }
 
         final Locale locale = toLocale(normalizeLanguage(language));
+
+        // Content-model metadata is editor-facing: gate it on the same permission that
+        // grants access to jContent (where this panel lives) on the requested site.
+        jcrTemplate.doExecute(user, Constants.EDIT_WORKSPACE, locale, session -> {
+            JCRNodeWrapper siteNode;
+            try {
+                siteNode = session.getNode("/sites/" + validatedSiteKey);
+            } catch (javax.jcr.PathNotFoundException e) {
+                throw new IllegalArgumentException("Unknown site: " + validatedSiteKey);
+            }
+
+            if (!siteNode.hasPermission("jContentAccess")) {
+                throw new SecurityException("Insufficient permissions to browse property definitions on site " + validatedSiteKey);
+            }
+
+            return null;
+        });
+
         ExtendedNodeType type;
         try {
             type = NodeTypeRegistry.getInstance().getNodeType(trimmedType);
