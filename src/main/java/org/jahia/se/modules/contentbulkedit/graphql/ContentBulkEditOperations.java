@@ -19,10 +19,14 @@ import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditSearchFilte
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditSearchResult;
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditSelectorOption;
 import org.jahia.se.modules.contentbulkedit.graphql.model.GqlBulkEditUpdateInput;
+import org.jahia.registries.ServicesRegistry;
+import org.jahia.services.content.ComplexPublicationService;
 import org.jahia.services.content.JCRNodeWrapper;
+import org.jahia.services.content.JCRPublicationService;
 import org.jahia.services.content.JCRSessionFactory;
 import org.jahia.services.content.JCRSessionWrapper;
 import org.jahia.services.content.JCRTemplate;
+import org.jahia.services.content.PublicationInfo;
 import org.jahia.services.content.nodetypes.ExtendedNodeType;
 import org.jahia.services.content.nodetypes.ExtendedPropertyDefinition;
 import org.jahia.services.content.nodetypes.NodeTypeRegistry;
@@ -106,11 +110,18 @@ public class ContentBulkEditOperations {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private JCRTemplate jcrTemplate;
+    private ComplexPublicationService complexPublicationService;
 
     @Inject
     @GraphQLOsgiService
     public void setJcrTemplate(JCRTemplate jcrTemplate) {
         this.jcrTemplate = jcrTemplate;
+    }
+
+    @Inject
+    @GraphQLOsgiService
+    public void setComplexPublicationService(ComplexPublicationService complexPublicationService) {
+        this.complexPublicationService = complexPublicationService;
     }
 
     @GraphQLField
@@ -413,6 +424,71 @@ public class ContentBulkEditOperations {
                         logger.warn("Unable to roll back session after failure on node {}", nodeUuid, refreshError);
                     }
 
+                    executionResult.getFailedNodes().add(nodeUuid);
+                    GqlBulkEditExecutionError error = new GqlBulkEditExecutionError();
+                    error.setNodeUuid(nodeUuid);
+                    error.setMessage(e.getMessage());
+                    try {
+                        error.setNodePath(session.getNodeByIdentifier(nodeUuid).getPath());
+                    } catch (Exception ignored) {
+                        error.setNodePath(null);
+                    }
+                    executionResult.getErrors().add(error);
+                }
+            }
+
+            return executionResult;
+        });
+    }
+
+    @GraphQLField
+    @GraphQLDescription("Publish selected nodes (with their references) in the given language")
+    public GqlBulkEditExecutionResult publishContent(
+            @GraphQLName("siteKey") @GraphQLNonNull String siteKey,
+            @GraphQLName("language") @GraphQLNonNull String language,
+            @GraphQLName("nodeUuids") @GraphQLNonNull List<String> nodeUuids
+    ) throws RepositoryException {
+        ensureJcrTemplate();
+        JahiaUser user = requireAuthenticatedUser();
+
+        final String validatedSiteKey = validateSiteKey(siteKey);
+        final String normalizedLanguage = normalizeLanguage(language);
+        final JCRPublicationService publicationService = ServicesRegistry.getInstance().getJCRPublicationService();
+        final Set<String> languages = Collections.singleton(normalizedLanguage);
+
+        Locale locale = toLocale(normalizedLanguage);
+        return jcrTemplate.doExecute(user, Constants.EDIT_WORKSPACE, locale, session -> {
+            GqlBulkEditExecutionResult executionResult = new GqlBulkEditExecutionResult();
+            executionResult.setSuccessfulNodes(new ArrayList<>());
+            executionResult.setFailedNodes(new ArrayList<>());
+            executionResult.setErrors(new ArrayList<>());
+            executionResult.setUpdatedProperties(0);
+
+            for (String nodeUuid : nodeUuids) {
+                if (StringUtils.isBlank(nodeUuid)) {
+                    continue;
+                }
+
+                try {
+                    JCRNodeWrapper node = session.getNodeByIdentifier(nodeUuid);
+                    if (!node.getPath().startsWith("/sites/" + validatedSiteKey + "/") &&
+                            !node.getPath().equals("/sites/" + validatedSiteKey)) {
+                        throw new RepositoryException("Node is outside of the requested site");
+                    }
+
+                    // publishByMainId escalates internally, so the caller must gate on the
+                    // publish permission explicitly.
+                    if (!node.hasPermission("publish")) {
+                        throw new RepositoryException("Insufficient permissions to publish " + node.getPath());
+                    }
+
+                    publicationService.publishByMainId(nodeUuid, Constants.EDIT_WORKSPACE, Constants.LIVE_WORKSPACE,
+                            languages, false, Collections.emptyList());
+
+                    executionResult.getSuccessfulNodes().add(nodeUuid);
+                    executionResult.setUpdatedProperties(executionResult.getUpdatedProperties() + 1);
+                } catch (Exception e) {
+                    logger.error("Bulk publish failed on node {}", nodeUuid, e);
                     executionResult.getFailedNodes().add(nodeUuid);
                     GqlBulkEditExecutionError error = new GqlBulkEditExecutionError();
                     error.setNodeUuid(nodeUuid);
@@ -1026,7 +1102,8 @@ public class ContentBulkEditOperations {
         }
 
         JCRNodeWrapper translationNode = getTranslationNode(node, language);
-        if (!matchesFilters(node, translationNode, filters)) {
+        String publicationStatus = resolvePublicationStatus(node, translationNode, language);
+        if (!matchesFilters(node, translationNode, filters, publicationStatus)) {
             return null;
         }
 
@@ -1040,7 +1117,7 @@ public class ContentBulkEditOperations {
         gqlNode.setCreated(formatDate(resolveNodeDate(node, translationNode, "jcr:created")));
         gqlNode.setLastModified(formatDate(resolveNodeDate(node, translationNode, "jcr:lastModified")));
         gqlNode.setPublicationDate(formatDate(resolveNodeDate(node, translationNode, "j:lastPublished")));
-        gqlNode.setPublicationStatus(isPublished(node) ? "published" : "unpublished");
+        gqlNode.setPublicationStatus(publicationStatus);
         gqlNode.setAuthor(resolveAuthor(node, translationNode));
         gqlNode.setPropertyValues(collectPropertyValues(node, language, properties));
         gqlNode.setTags(readStringValues(node, "j:tagList"));
@@ -1050,7 +1127,8 @@ public class ContentBulkEditOperations {
 
     private boolean matchesFilters(JCRNodeWrapper node,
                                    JCRNodeWrapper translationNode,
-                                   GqlBulkEditSearchFiltersInput filters) throws RepositoryException {
+                                   GqlBulkEditSearchFiltersInput filters,
+                                   String publicationStatus) throws RepositoryException {
         if (filters == null) {
             return true;
         }
@@ -1066,15 +1144,9 @@ public class ContentBulkEditOperations {
             return false;
         }
 
-        if (StringUtils.isNotBlank(filters.getPublicationStatus())) {
-            boolean published = isPublished(node);
-            if ("published".equalsIgnoreCase(filters.getPublicationStatus()) && !published) {
-                return false;
-            }
-
-            if ("unpublished".equalsIgnoreCase(filters.getPublicationStatus()) && published) {
-                return false;
-            }
+        if (StringUtils.isNotBlank(filters.getPublicationStatus()) &&
+                !filters.getPublicationStatus().equalsIgnoreCase(publicationStatus)) {
+            return false;
         }
 
         if (StringUtils.isNotBlank(filters.getAuthor())) {
@@ -1248,6 +1320,91 @@ public class ContentBulkEditOperations {
 
     private boolean isPublished(JCRNodeWrapper node) throws RepositoryException {
         return node.hasProperty("j:published") && node.getProperty("j:published").getBoolean();
+    }
+
+    /**
+     * Publication status resolved by Jahia's publication engine (same source as jContent's
+     * status badges), so non-i18n property changes, translation changes, and pending
+     * deletions are all detected. States: {@code unpublished}, {@code published},
+     * {@code modified}, {@code markedForDeletion}.
+     */
+    private String resolvePublicationStatus(JCRNodeWrapper node, JCRNodeWrapper translationNode, String language) throws RepositoryException {
+        if (complexPublicationService != null) {
+            try {
+                ComplexPublicationService.AggregatedPublicationInfo info = complexPublicationService.getAggregatedPublicationInfo(
+                        node.getIdentifier(), language.split("[-_]")[0], false, false, (JCRSessionWrapper) node.getSession());
+                return mapPublicationStatus(info.getPublicationStatus(), node);
+            } catch (Exception e) {
+                logger.debug("Unable to resolve aggregated publication info for {}", node.getPath(), e);
+            }
+        }
+
+        return resolvePublicationStatusFromDates(node, translationNode);
+    }
+
+    private String mapPublicationStatus(int status, JCRNodeWrapper node) throws RepositoryException {
+        switch (status) {
+            case PublicationInfo.PUBLISHED:
+            case PublicationInfo.LIVE_ONLY:
+                return "published";
+            case PublicationInfo.MODIFIED:
+            case PublicationInfo.LIVE_MODIFIED:
+            case PublicationInfo.CONFLICT:
+                return "modified";
+            case PublicationInfo.NOT_PUBLISHED:
+                return "notPublished";
+            case PublicationInfo.UNPUBLISHED:
+                return "unpublished";
+            case PublicationInfo.MARKED_FOR_DELETION:
+            case PublicationInfo.DELETED:
+                return "markedForDeletion";
+            default:
+                return isPublished(node) ? "published" : resolveNeverOrUnpublished(node);
+        }
+    }
+
+    /**
+     * Distinguishes content that was never published from content that was published
+     * then taken offline: a {@code j:lastPublished} property only exists after a
+     * first publication.
+     */
+    private String resolveNeverOrUnpublished(JCRNodeWrapper node) throws RepositoryException {
+        return node.hasProperty("j:lastPublished") ? "unpublished" : "notPublished";
+    }
+
+    /**
+     * Date-based fallback when the publication service is unavailable. Compares the most
+     * recent modification (main node or translation) against the last publication.
+     */
+    private String resolvePublicationStatusFromDates(JCRNodeWrapper node, JCRNodeWrapper translationNode) throws RepositoryException {
+        if (!isPublished(node)) {
+            return resolveNeverOrUnpublished(node);
+        }
+
+        Calendar lastModified = latestDate(node, translationNode, "jcr:lastModified");
+        Calendar lastPublished = latestDate(node, translationNode, "j:lastPublished");
+        if (lastModified != null && lastPublished != null && lastModified.after(lastPublished)) {
+            return "modified";
+        }
+
+        return "published";
+    }
+
+    private Calendar latestDate(JCRNodeWrapper node, JCRNodeWrapper translationNode, String propertyName) throws RepositoryException {
+        Calendar mainDate = node.hasProperty(propertyName) ? readCalendarProperty(node.getProperty(propertyName)) : null;
+        Calendar translationDate = translationNode != null && translationNode.hasProperty(propertyName)
+                ? readCalendarProperty(translationNode.getProperty(propertyName))
+                : null;
+
+        if (mainDate == null) {
+            return translationDate;
+        }
+
+        if (translationDate == null) {
+            return mainDate;
+        }
+
+        return translationDate.after(mainDate) ? translationDate : mainDate;
     }
 
     private String resolveAuthor(JCRNodeWrapper node, JCRNodeWrapper translationNode) throws RepositoryException {

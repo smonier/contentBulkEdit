@@ -134,6 +134,30 @@ export const SEARCH_CONTENT_QUERY = gql`
     }
 `;
 
+export const PUBLISH_CONTENT_MUTATION = gql`
+    mutation PublishContent(
+        $siteKey: String!
+        $language: String!
+        $nodeUuids: [String!]!
+    ) {
+        contentBulkEdit {
+            publishContent(
+                siteKey: $siteKey
+                language: $language
+                nodeUuids: $nodeUuids
+            ) {
+                successfulNodes
+                failedNodes
+                errors {
+                    nodeUuid
+                    nodePath
+                    message
+                }
+            }
+        }
+    }
+`;
+
 export const BULK_EDIT_MUTATION = gql`
     mutation BulkEditContent(
         $siteKey: String!

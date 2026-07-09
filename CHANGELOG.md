@@ -5,10 +5,34 @@ All notable changes to this module are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-07-07
 
-Substantial rework of typing, security, and UX. Given the breaking API changes below,
-this should be released as **1.1.0**.
+Publication awareness and table ergonomics.
+
+### Added
+
+- **Publication status column** in the results table, resolved by Jahia's publication
+  engine (`ComplexPublicationService`, the same source as jContent's badges) so i18n,
+  non-i18n, and reference changes are all detected. Five states with jContent colors:
+  published, modified, never published, unpublished, marked for deletion.
+- **Bulk publish**: `publishContent(siteKey, language, nodeUuids)` GraphQL mutation and
+  a "Publish selection" header action with confirmation dialog. Publishes each selected
+  node (including references) to live in the working language; every node is gated on
+  the `publish` permission and failures are reported per node. Statuses refresh after
+  publication.
+- Publication status search filter extended with **Modified** and **Never published**.
+- **Sortable result table**: click any column header (name, status, property columns,
+  tags, categories) for ascending/descending sort; third click restores search order.
+  Locale-aware and numeric-aware, client-side, with `aria-sort`.
+
+### Changed
+
+- The French label for unpublished content is now "Dépublié" (previously "Non publié")
+  to disambiguate from "Jamais publié" (never published).
+
+## [1.1.0] - 2026-07-07
+
+Substantial rework of typing, security, and UX, with breaking API changes.
 
 ### Added
 

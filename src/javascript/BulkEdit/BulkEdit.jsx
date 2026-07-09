@@ -9,10 +9,12 @@ import {
     GET_PROPERTY_DEFINITIONS_QUERY,
     GET_CONTENT_TYPES_QUERY,
     GET_SITE_LANGUAGES_QUERY,
+    PUBLISH_CONTENT_MUTATION,
     SEARCH_CONTENT_QUERY
 } from './BulkEdit.gql-queries';
 import {BulkEditPanel} from './components/BulkEditPanel';
 import {ConfirmDialog} from './components/ConfirmDialog';
+import {PublishDialog} from './components/PublishDialog';
 import {PropertySelector} from './components/PropertySelector';
 import {ResultsTable} from './components/ResultsTable';
 import {SearchFilters} from './components/SearchFilters';
@@ -56,6 +58,7 @@ export const BulkEdit = ({match}) => {
     const [selectedCategoryIds, setSelectedCategoryIds] = useState([]);
     const [selectedCategoryLabels, setSelectedCategoryLabels] = useState([]);
     const [confirmOpen, setConfirmOpen] = useState(false);
+    const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
     const [lastSearchVariables, setLastSearchVariables] = useState(null);
     const [searchValidationErrors, setSearchValidationErrors] = useState({});
     const [filtersCollapsed, setFiltersCollapsed] = useState(false);
@@ -85,6 +88,7 @@ export const BulkEdit = ({match}) => {
     });
 
     const [executeBulkEdit, {loading: executing}] = useMutation(BULK_EDIT_MUTATION);
+    const [executePublish, {loading: publishing}] = useMutation(PUBLISH_CONTENT_MUTATION);
 
     const languages = useMemo(() => {
         return languagesData?.jcr?.nodeByPath?.languages?.values || [];
@@ -369,6 +373,44 @@ export const BulkEdit = ({match}) => {
         setConfirmOpen(true);
     };
 
+    const handleOpenPublishConfirm = () => {
+        if (selectedNodes.length === 0) {
+            notify('warning', t('contentBulkEdit.selectRows'));
+            return;
+        }
+
+        setPublishConfirmOpen(true);
+    };
+
+    const handlePublish = async () => {
+        try {
+            const response = await executePublish({
+                variables: {
+                    siteKey,
+                    language: selectedLanguage,
+                    nodeUuids: selectedNodes
+                }
+            });
+
+            const result = response?.data?.contentBulkEdit?.publishContent;
+            setPublishConfirmOpen(false);
+
+            if (result?.failedNodes?.length > 0) {
+                notify('warning', t('contentBulkEdit.publishPartial'));
+            } else {
+                notify('success', t('contentBulkEdit.publishSuccess'));
+            }
+
+            setSelectedNodes([]);
+
+            if (lastSearchVariables) {
+                executeSearch({variables: lastSearchVariables});
+            }
+        } catch {
+            notify('error', t('contentBulkEdit.publishError'));
+        }
+    };
+
     const handleExecute = async () => {
         try {
             const response = await executeBulkEdit({
@@ -425,6 +467,12 @@ export const BulkEdit = ({match}) => {
                         key="run-search"
                         label={t('contentBulkEdit.search')}
                         onClick={handleSearch}
+                    />,
+                    <Button
+                        key="bulk-publish"
+                        label={t('contentBulkEdit.publishSelection')}
+                        isDisabled={selectedNodes.length === 0}
+                        onClick={handleOpenPublishConfirm}
                     />,
                     <Button
                         key="bulk-apply"
@@ -548,6 +596,16 @@ export const BulkEdit = ({match}) => {
                 isLoading={executing}
                 onCancel={() => setConfirmOpen(false)}
                 onConfirm={handleExecute}
+            />
+
+            <PublishDialog
+                t={t}
+                isOpen={publishConfirmOpen}
+                count={selectedNodes.length}
+                language={selectedLanguage}
+                isLoading={publishing}
+                onCancel={() => setPublishConfirmOpen(false)}
+                onConfirm={handlePublish}
             />
         </>
     );

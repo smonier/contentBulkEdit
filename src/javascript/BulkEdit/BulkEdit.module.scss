@@ -271,6 +271,60 @@
     background: var(--color-accent_light_plain20, #def4fd);
 }
 
+.sortableHeader {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-nano, 4px);
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    font-weight: inherit;
+    color: inherit;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.sortableHeader:hover {
+    color: var(--color-accent_dark, #0072b1);
+}
+
+.statusCell {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.statusDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+}
+
+.statusDotPublished {
+    background: var(--color-publicationStatus-published, #00aa4f);
+}
+
+.statusDotModified {
+    background: var(--color-publicationStatus-modified, #ef6c00);
+}
+
+.statusDotUnpublished {
+    background: var(--color-publicationStatus-unpublished, #cecece);
+    border: 1px solid var(--color-gray, #7a7f88);
+}
+
+.statusDotNotPublished {
+    background: var(--color-publicationStatus-notPublished, #212121);
+}
+
+.statusDotMarkedForDeletion {
+    background: var(--color-publicationStatus-markedForDeletion, #c00);
+}
+
 .expandedBlock {
     display: grid;
     gap: var(--spacing-medium, 16px);

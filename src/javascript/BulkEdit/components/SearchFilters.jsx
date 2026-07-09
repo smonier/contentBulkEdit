@@ -17,6 +17,8 @@ export const SearchFilters = ({
     const publicationStatuses = useMemo(() => ([
         {label: t('contentBulkEdit.allStatuses'), value: ''},
         {label: t('contentBulkEdit.published'), value: 'published'},
+        {label: t('contentBulkEdit.modified'), value: 'modified'},
+        {label: t('contentBulkEdit.notPublished'), value: 'notPublished'},
         {label: t('contentBulkEdit.unpublished'), value: 'unpublished'}
     ]), [t]);
 

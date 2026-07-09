@@ -6,9 +6,10 @@ This module adds a `Content bulk edit` entry under the `Content Tools` accordion
 
 - search content with multiple criteria (index-backed full-text and date filters)
 - choose which properties to display and edit, grouped like Content Editor
-- select matching rows
+- select matching rows in a sortable result table with live publication status
 - prepare typed bulk values in a dedicated side panel
 - apply updates, clears, tags, and categories with per-field replace/append modes
+- bulk publish the selection (with references) in the working language
 
 ## Main Features
 
@@ -18,7 +19,7 @@ This module adds a `Content bulk edit` entry under the `Content Tools` accordion
   - full-text search (pushed into the JCR-SQL2 query, `CONTAINS`)
   - path picker
   - content type
-  - publication status
+  - publication status (published / modified / never published / unpublished)
   - author (exact username match)
   - language
   - publication / creation / last modification date ranges (pushed into the query as indexed range conditions)
@@ -53,8 +54,16 @@ The side panel renders each field according to its definition:
 ### Results table
 
 - Sticky header inside a scrollable container, ellipsis + hover tooltips on long values
+- **Publication status column** driven by Jahia's publication engine (same source as jContent's badges), with five states: published (green), modified (orange), never published (dark), unpublished (gray), marked for deletion (red). Non-i18n property changes and translation changes are both detected.
+- **Sortable columns** — click any header (name, status, property columns, tags, categories) to sort ascending/descending; third click restores the original order. Locale-aware, numeric-aware, client-side.
 - Reference property values are rendered as the target node's display name, not a raw UUID
 - Expandable metadata block for path, status, dates, and author
+
+### Bulk publish
+
+- "Publish selection" header action publishes every selected node (including its references) from default to live in the working language, after an explicit confirmation
+- Each node is gated on the `publish` permission and reported individually; one failure never blocks the rest
+- Statuses refresh automatically after publication — a typical flow is: sort by status, select all "modified" rows, publish
 
 ### Security model
 
@@ -161,9 +170,10 @@ The module exposes a dedicated GraphQL extension under `contentBulkEdit`.
 - `getCategories(siteKey, language, rootPath)` — `rootPath` optionally scopes the tree to a subtree of `/sites/systemsite/categories`
 - `getPropertyDefinitions(nodeType, language)` — editable property definitions with full type metadata, ordered own type → inherited → mixin groups, with Content Editor fieldset overrides merged in
 
-### Mutation
+### Mutations
 
 - `bulkEditContent(siteKey, language, nodeUuids, propertyNames, propertyValues, propertyModes, clearPropertyNames, tagValues, tagMode, categoryIdentifiers, categoryMode)`
+- `publishContent(siteKey, language, nodeUuids)` — publishes each node (with references) to live in the given language; requires the `publish` permission per node, failures reported per node
 
 Bulk property updates are sent as parallel arrays (`propertyNames` / `propertyValues` / `propertyModes`). Values are always strings; the server resolves the applicable property definition and coerces them to the required JCR type (references accept a UUID or an absolute path; multi-values are comma-separated). Internationalization and cardinality come from the definition — never from the client.
 

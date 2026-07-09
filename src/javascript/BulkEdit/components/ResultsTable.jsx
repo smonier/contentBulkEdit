@@ -18,6 +18,51 @@ import styles from '../BulkEdit.module.scss';
 
 const formatDate = value => value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '';
 
+// Extracts the sortable string value of a node for a given column key
+const getSortValue = (node, key) => {
+    if (key === 'name') {
+        return node.displayName || node.name || '';
+    }
+
+    if (key === 'status') {
+        return node.publicationStatus || '';
+    }
+
+    if (key === 'tags') {
+        return (node.tags || []).join(', ');
+    }
+
+    if (key === 'categories') {
+        return (node.categories || []).join(', ');
+    }
+
+    if (key.startsWith('prop:')) {
+        return getPropertyValue(node, key.slice(5));
+    }
+
+    return '';
+};
+
+const STATUS_DOT_CLASS = {
+    published: 'statusDotPublished',
+    modified: 'statusDotModified',
+    notPublished: 'statusDotNotPublished',
+    unpublished: 'statusDotUnpublished',
+    markedForDeletion: 'statusDotMarkedForDeletion'
+};
+
+const PublicationStatus = ({t, status}) => (
+    <span className={styles.statusCell}>
+        <span className={`${styles.statusDot} ${styles[STATUS_DOT_CLASS[status] || 'statusDotNotPublished']}`}/>
+        <Typography variant="caption">{t(`contentBulkEdit.${status || 'notPublished'}`)}</Typography>
+    </span>
+);
+
+PublicationStatus.propTypes = {
+    t: PropTypes.func.isRequired,
+    status: PropTypes.string
+};
+
 const getPropertyValue = (node, propertyName) => {
     const property = (node.propertyValues || []).find(item => item.name === propertyName);
     return property?.value || '';
@@ -33,6 +78,7 @@ export const ResultsTable = ({
     onToggleRow
 }) => {
     const [expandedNodeUuid, setExpandedNodeUuid] = useState(null);
+    const [sortConfig, setSortConfig] = useState(null);
     const allSelected = nodes.length > 0 && selectedNodes.length === nodes.length;
 
     const orderedColumns = useMemo(() => {
@@ -46,9 +92,45 @@ export const ResultsTable = ({
         setExpandedNodeUuid(current => current === uuid ? null : uuid);
     }, []);
 
+    const handleSort = useCallback(key => {
+        setSortConfig(current => {
+            if (current?.key !== key) {
+                return {key, direction: 'asc'};
+            }
+
+            return current.direction === 'asc' ? {key, direction: 'desc'} : null;
+        });
+    }, []);
+
+    const sortedNodes = useMemo(() => {
+        if (!sortConfig) {
+            return nodes;
+        }
+
+        const factor = sortConfig.direction === 'desc' ? -1 : 1;
+        return [...nodes].sort((left, right) =>
+            factor * getSortValue(left, sortConfig.key).localeCompare(getSortValue(right, sortConfig.key), undefined, {sensitivity: 'base', numeric: true})
+        );
+    }, [nodes, sortConfig]);
+
     const expandedNode = useMemo(() => {
         return nodes.find(node => node.uuid === expandedNodeUuid) || null;
     }, [expandedNodeUuid, nodes]);
+
+    const renderSortableHeader = (key, label) => {
+        const isActive = sortConfig?.key === key;
+        return (
+            <button
+                type="button"
+                className={styles.sortableHeader}
+                aria-sort={isActive ? (sortConfig.direction === 'asc' ? 'ascending' : 'descending') : undefined}
+                onClick={() => handleSort(key)}
+            >
+                {label}
+                {isActive && (sortConfig.direction === 'asc' ? <ChevronUp/> : <ChevronDown/>)}
+            </button>
+        );
+    };
 
     return (
         <div className={styles.tableContainer}>
@@ -62,17 +144,18 @@ export const ResultsTable = ({
                                 onChange={event => onToggleAll(event.target.checked)}
                             />
                         </TableHeadCell>
-                        <TableHeadCell>{t('contentBulkEdit.table.name')}</TableHeadCell>
+                        <TableHeadCell>{renderSortableHeader('name', t('contentBulkEdit.table.name'))}</TableHeadCell>
+                        <TableHeadCell>{renderSortableHeader('status', t('contentBulkEdit.table.status'))}</TableHeadCell>
                         {orderedColumns.map(column => (
-                            <TableHeadCell key={column.name}>{column.label}</TableHeadCell>
+                            <TableHeadCell key={column.name}>{renderSortableHeader(`prop:${column.name}`, column.label)}</TableHeadCell>
                         ))}
-                        <TableHeadCell>{t('contentBulkEdit.table.tags')}</TableHeadCell>
-                        <TableHeadCell>{t('contentBulkEdit.table.category')}</TableHeadCell>
+                        <TableHeadCell>{renderSortableHeader('tags', t('contentBulkEdit.table.tags'))}</TableHeadCell>
+                        <TableHeadCell>{renderSortableHeader('categories', t('contentBulkEdit.table.category'))}</TableHeadCell>
                         <TableHeadCell/>
                     </TableRow>
                 </TableHead>
                 <TableBody>
-                    {nodes.map(node => {
+                    {sortedNodes.map(node => {
                         const isSelected = selectedNodes.includes(node.uuid);
                         const isExpanded = expandedNodeUuid === node.uuid;
 
@@ -94,6 +177,9 @@ export const ResultsTable = ({
                                     >
                                         {node.displayName || node.name}
                                     </Typography>
+                                </TableBodyCell>
+                                <TableBodyCell>
+                                    <PublicationStatus t={t} status={node.publicationStatus}/>
                                 </TableBodyCell>
                                 {orderedColumns.map(column => {
                                     const propertyValue = getPropertyValue(node, column.name);
