@@ -34,7 +34,7 @@
     <groupId>org.jahia.se.modules</groupId>
     <artifactId>contentBulkEdit</artifactId>
     <name>Content Bulk Edit Module</name>
-    <version>1.1.1-SNAPSHOT</version>
+    <version>1.2.0</version>
     <packaging>bundle</packaging>
     <description>This is the custom ReactJS module (Content Bulk Edit Module) for running on a Jahia server.</description>
 
@@ -42,7 +42,7 @@
         <connection>scm:git:git@github.com:smonier/contentBulkEdit.git</connection>
         <developerConnection>scm:git:git@github.com:smonier/contentBulkEdit.git</developerConnection>
         <url>https://github.com/smonier/contentBulkEdit</url>
-        <tag>HEAD</tag>
+        <tag>contentBulkEdit-1.2.0</tag>
     </scm>
     <properties>
         <yarn.arguments>build:production</yarn.arguments>
